@@ -1,37 +1,56 @@
 <?xml version="1.0"?>
 <launch>
-  
-    <group ns="axis_camera">		
-		<!-- Flag to enable/disable the execution of image republish and proc -->
-		<arg name="run_republish" value="true"/>
-		<arg name="ptz_enabled" value="true"/>
-		
-		<param name="hostname" value="192.168.0.185" />
-		<!--param name="hostname" value="192.168.0.73" /-->
-		<param name="username" value="root" />
-		<param name="password" value="R0b0tn1K" />
-		<param name="camera_number" value="1" />
-		<!--param name="camera_model" value="axis_p5512"/-->
-		<param name="camera_model" value="axis_p5534"/>
-		<param name="camera_id" value="XXXX"/>
-		<param name="fps" value="0"/>
-		<param name="compression" value="0"/>
-		<param name="frame" value="axis_camera1"/>
-		<param name="profile" value="TestQuality"/>
-		<param name="enable_auth" value="false"/>
-		
-		<rosparam file="$(find axis_camera)/config/ptz_config.yaml" command="load" if="$(arg ptz_enabled)"/>
+
+    <arg name="name" default="axis_camera"/>
+    <arg name="ip_address" default="192.168.0.186"/>
+    <arg name="username" default="root"/>
+    <arg name="password" default="R0b0tn1K"/>
+    <arg name="run_republish" default="true"/>
+    <arg name="ptz_enabled" default="true"/>
+    <arg name="camera_id" default="1"/>
+    <arg name="camera_number" default="1"/>
+    <arg name="camera_model" default="axis_p5534"/>
+    <!-- fps of the stream (0 max) -->
+    <arg name="fps" default="0"/>
+    <!-- compression applied to the stream (0 no compression) -->
+    <arg name="compression" default="0"/>
+    <arg name="ptz_config_file" default="$(find axis_camera)/config/$(arg camera_model)_ptz_config.yaml"/>
+    <!-- Loads an internal profile of the camera -->
+    <arg name="profile" default="quality"/>
+    <!-- enables the authentication -->
+    <arg name="enable_auth" default="false"/> 
+    <arg name="camera_info_url" default="package://axis_camera/data/$(arg camera_model).yaml"/>
+    
+    <arg name="frame_id" default="$(arg name)"/>
+    <arg name="pan_joint" default="$(arg name)_pan_joint"/>
+    <arg name="tilt_joint" default="$(arg name)_tilt_joint"/>
+
+    <group ns="$(arg name)">				
+		<param name="hostname" value="$(arg ip_address)"/>
+		<param name="username" value="$(arg username)" />
+		<param name="password" value="$(arg password)" />
+		<param name="camera_number" value="$(arg camera_number)" />
+		<param name="camera_model" value="$(arg camera_model)"/>
+		<param name="camera_id" value="$(arg camera_id)"/>
+		<param name="fps" value="$(arg fps)"/>
+		<param name="compression" value="$(arg compression)"/>
+		<param name="frame" value="$(arg frame_id)"/>
+		<param name="profile" value="$(arg profile)"/>
+		<param name="enable_auth" value="$(arg enable_auth)"/>
+		<param name="pan_joint" value="$(arg pan_joint)"/>
+		<param name="tilt_joint" value="$(arg tilt_joint)"/>
+
+		<rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
 		
 		<!-- Important: Every model has its own config file. This config file will depend on the Axis configuration -->
-		<param name="camera_info_url" value="package://axis_camera/data/axis_p5534.yaml"/>
+		<param name="camera_info_url" value="$(arg camera_info_url)"/>
 		
-		<node pkg="axis_camera" type="axis_node.py" name="axis_camera" output="screen"/>
+		<node pkg="axis_camera" type="axis_node.py" name="$(arg name)" output="screen"/>
 		<!-- Republishes from Compressed to raw -->
 		<node pkg="image_transport" type="republish" name="axis_republisher" output="screen" args="compressed in:= raw out:=image_raw" if="$(arg run_republish)"/>
 		<!-- IMAGE PROC: Republish image topics by using camera info -->
 		<node pkg="image_proc" type="image_proc" name="axis_image_proc" output="screen" if="$(arg run_republish)"/>
-	
-	</group>
+    </group>
 	
 
 </launch>

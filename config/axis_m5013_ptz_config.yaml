@@ -7,12 +7,12 @@ eflip: false
 #pan_joint: a15_p5564_ptz_camera_pan_joint
 #tilt_joint: a15_p5564_ptz_camera_tilt_joint
 # degrees
-min_pan_value: -170
-max_pan_value: 170
-min_tilt_value: 0
-max_tilt_value: 90
+min_pan_value: -180
+max_pan_value: 180
+min_tilt_value: -90
+max_tilt_value: 0
 home_pan_value: 0
-home_tilt_value: 90
+home_tilt_value: -45
 
 # Flag to use a timeout to allow other processes to control the camera (like the Axis Web)
 use_control_timeout: false
