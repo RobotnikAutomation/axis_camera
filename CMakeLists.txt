@@ -8,6 +8,9 @@ catkin_python_setup()
 find_package(catkin REQUIRED COMPONENTS 
     message_generation
     robotnik_msgs
+    compressed_depth_image_transport
+    compressed_image_transport
+    theora_image_transport
     )
 
 add_message_files(DIRECTORY msg 
