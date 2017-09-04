@@ -168,6 +168,7 @@ class AxisPTZ(threading.Thread):
 		self.joint_states_topic = args['joint_states_topic']
 		self.use_control_timeout = args['use_control_timeout']
 		self.control_timeout_value = args['control_timeout_value']
+		self.invert_ptz = args['invert_ptz']
 		
 		self.current_ptz = AxisMsg()
 		self.last_msg = ptz()
@@ -240,6 +241,10 @@ class AxisPTZ(threading.Thread):
 			new_tilt = math.degrees(command.tilt)
 			new_zoom = command.zoom
 		
+		if self.invert_ptz:
+			new_pan = -1 * new_pan
+			new_tilt = -1 * new_tilt
+		
 		# Applies limit restrictions
 		if new_pan > self.max_pan_value:
 			new_pan = self.max_pan_value
@@ -302,7 +307,7 @@ class AxisPTZ(threading.Thread):
 		try:		
 			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",self.desired_pan, self.desired_tilt, self.desired_zoom)
 			url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
-			rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
+			#rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
 			conn.request("GET", url)
 			if conn.getresponse().status != 204:
 				rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, url) )
@@ -768,7 +773,8 @@ def main():
 	  'error_zoom': 99,
 	  'joint_states_topic': 'joint_states',
 	  'use_control_timeout': False,
-	  'control_timeout_value': 5.0
+	  'control_timeout_value': 5.0,
+	  'invert_ptz': False
 	}
 	args = {}
 	
