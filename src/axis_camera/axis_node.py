@@ -194,9 +194,9 @@ class AxisPTZ(threading.Thread):
 		"""
 			Sets the ros connections
 		"""
-		self.pub = rospy.Publisher("%scamera_params"%rospy.get_namespace(), AxisMsg, self)
+		self.pub = rospy.Publisher("~camera_params", AxisMsg, self)
 		#self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
-		self.sub = rospy.Subscriber("%sptz_command"%rospy.get_namespace(), ptz, self.command)
+		self.sub = rospy.Subscriber("~ptz_command", ptz, self.command)
 		# Publish the joint state of the pan & tilt
 		self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState)
 		
@@ -229,14 +229,15 @@ class AxisPTZ(threading.Thread):
 			self.last_command_time = rospy.get_rostime()
 			#rospy.loginfo("Last command time %i %i", self.last_command_time.secs, self.last_command_time.nsecs)
 		
+		# Need to convert from rad to degree
 		# relative motion
 		if command.relative:
-			new_pan = self.desired_pan + command.pan
-			new_tilt = self.desired_tilt + command.tilt
+			new_pan = math.degrees(self.desired_pan + command.pan)
+			new_tilt = math.degrees(self.desired_tilt + command.tilt)
 			new_zoom = self.desired_zoom + command.zoom
 		else:
-			new_pan = command.pan
-			new_tilt = command.tilt
+			new_pan = math.degrees(command.pan)
+			new_tilt = math.degrees(command.tilt)
 			new_zoom = command.zoom
 		
 		# Applies limit restrictions
@@ -301,6 +302,7 @@ class AxisPTZ(threading.Thread):
 		try:		
 			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",self.desired_pan, self.desired_tilt, self.desired_zoom)
 			url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
+			rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
 			conn.request("GET", url)
 			if conn.getresponse().status != 204:
 				rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, url) )
@@ -753,18 +755,18 @@ def main():
 	  'eflip': False,
 	  'pan_joint': 'pan',
 	  'tilt_joint': 'tilt',
-	  'min_pan_value': -170,
-	  'max_pan_value': 170,
+	  'min_pan_value': -2.97,
+	  'max_pan_value': 2.97,
 	  'min_tilt_value': 0,
-	  'max_tilt_value': 90,
+	  'max_tilt_value': 1.57,
 	  'max_zoom_value': 20000,
 	  'min_zoom_value': 0,
-	  'home_pan_value': -180,
-	  'home_tilt_value': 90,
+	  'home_pan_value': -3.14,
+	  'home_tilt_value': 0.0,
 	  'ptz_rate': 5.0,
 	  'error_pos': 0.5,
 	  'error_zoom': 99,
-	  'joint_states_topic': '/joint_states',
+	  'joint_states_topic': 'joint_states',
 	  'use_control_timeout': False,
 	  'control_timeout_value': 5.0
 	}
