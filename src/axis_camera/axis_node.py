@@ -781,11 +781,10 @@ def main():
 	
 	for name in arg_defaults:
 		
-		param_name = '%s/%s'%(axis_node_namespace,name)
+		param_name = '%s%s'%(axis_node_namespace,name)
 		
 		if rospy.search_param(param_name):		
 			args[name] = rospy.get_param(param_name)
-			#print 'arg %s = %s'%(name, args[name])
 		else:
 			args[name] = arg_defaults[name]
 		
