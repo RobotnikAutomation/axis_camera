@@ -60,84 +60,6 @@ import diagnostic_updater
 import diagnostic_msgs
 
 
-class AxisPTZ_1():
-	"""
-		Class interface to set the Pan Tilt Zoom of the camera
-		No thread
-	"""
-	def __init__(self, hostname, username, password):
-		self.hostname = hostname
-		self.username = username
-		self.password = password
-		self.current_ptz = AxisMsg()
-		self.last_msg = ptz()
-		#threading.Thread.__init__(self)
-		
-		#self.daemon = True
-	
-	def rosSetup(self):
-		"""
-			Sets the ros connections
-		"""
-		#self.pub = rospy.Publisher("state", Axis, self)
-		#self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
-		self.sub = rospy.Subscriber("%s/ptz_command"%rospy.get_name(), ptz, self.command)
-
- 
-	def command(self, msg):
-		"""
-			Command for ptz movements
-		"""
-		
-		#print msg
-		# if msg is repeated,discard it to avoid saturation
-		if msg.relative or (self.last_msg.pan != msg.pan or  self.last_msg.tilt != msg.tilt or self.last_msg.zoom != msg.zoom):
-			desired_pan = msg.pan
-			desired_tilt = msg.tilt
-			desired_zoom = msg.zoom
-			
-			conn = httplib.HTTPConnection(self.hostname)
-			# relative motion
-			if msg.relative:
-				desired_pan += self.current_ptz.pan
-				desired_tilt += self.current_ptz.tilt
-				desired_zoom += self.current_ptz.zoom
-				
-			params = { 'pan': desired_pan, 'tilt': desired_tilt, 'zoom': desired_zoom }
-					
-			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",desired_pan, desired_tilt, desired_zoom)
-			conn.request("GET", "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params))
-			print "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
-		
-		self.last_msg = msg
-		
-		
-	def getPTZState(self):
-		"""
-			Gets the current ptz state/position of the camera
-		"""
-		
-		conn = httplib.HTTPConnection(self.hostname)
-
-		params = { 'query':'position' }
-		conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.urlencode(params))
-		response = conn.getresponse()
-		if response.status == 200:
-			body = response.read()
-			params = dict([s.split('=',2) for s in body.splitlines()])
-			self.current_ptz.pan = float(params['pan'])
-			self.current_ptz.tilt = float(params['tilt'])
-			self.current_ptz.zoom = float(params['zoom'])
-			self.current_ptz.iris = float(params['iris'])
-			self.current_ptz.focus = 0.0
-		if 'focus' in params:
-			self.current_ptz.focus = float(params['focus'])
-
-			self.current_ptz.autofocus = (params['autofocus'] == 'on')
-		
-		print self.current_ptz
-		#self.axis.pub.publish(self.msg)
-
 
 class AxisPTZ(threading.Thread):
 	"""
@@ -197,53 +119,47 @@ class AxisPTZ(threading.Thread):
 		"""
 		self.pub = rospy.Publisher("~camera_params", AxisMsg, self)
 		#self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
-		self.sub = rospy.Subscriber("~ptz_command", ptz, self.command)
+		self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
 		# Publish the joint state of the pan & tilt
 		self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState)
 		
 		# Services
-		self.command_service = rospy.Service('%sptz_command_service'%rospy.get_namespace(), set_ptz, self.commandService)
-		self.home_service = rospy.Service('%shome'%rospy.get_namespace(), Empty, self.homeService)
+		self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
 
  
-	def command(self, msg):
+	def commandPTZCb(self, msg):
 		"""
 			Command for ptz movements
 		"""
 		#print msg
-		self.setCommand(msg)
+		self.setCommandPTZ(msg)
 		
 		
-	def commandService(self, req):
-		"""
-			Service for ptz movements
-		"""
-		#print "Call to Axis command service"
-		self.setCommand(req)
+
 		
-		return 1
-		
-	def setCommand(self, command):
+	def setCommandPTZ(self, command):
 		
 		# Save time of requested command
 		if(self.use_control_timeout):
 			self.last_command_time = rospy.get_rostime()
 			#rospy.loginfo("Last command time %i %i", self.last_command_time.secs, self.last_command_time.nsecs)
-		
+		if self.invert_ptz:
+			invert_command = -1.0
+		else:
+			invert_command = 1.0
 		# Need to convert from rad to degree
 		# relative motion
 		if command.relative:
-			new_pan = math.degrees(self.desired_pan + command.pan)
-			new_tilt = math.degrees(self.desired_tilt + command.tilt)
+			new_pan = invert_command*command.pan + self.desired_pan
+			new_tilt = invert_command*command.tilt + self.desired_tilt
 			new_zoom = self.desired_zoom + command.zoom
+
 		else:
-			new_pan = math.degrees(command.pan)
-			new_tilt = math.degrees(command.tilt)
+			new_pan = math.degrees(invert_command*command.pan)
+			new_tilt = math.degrees(invert_command*command.tilt)
 			new_zoom = command.zoom
 		
-		if self.invert_ptz:
-			new_pan = -1 * new_pan
-			new_tilt = -1 * new_tilt
+		
 		
 		# Applies limit restrictions
 		if new_pan > self.max_pan_value:
@@ -264,6 +180,7 @@ class AxisPTZ(threading.Thread):
 		self.desired_zoom = new_zoom
 		
 		
+		
 	def homeService(self, req):
 		
 		# Set home values
@@ -273,7 +190,7 @@ class AxisPTZ(threading.Thread):
 		home_command.tilt = self.home_tilt_value
 		home_command.zoom = 0
 		
-		self.setCommand(home_command)
+		self.setCommandPTZ(home_command)
 		
 		return {}
 		
@@ -284,8 +201,10 @@ class AxisPTZ(threading.Thread):
 		"""
 		# Only if it's syncronized
 		if self.ptz_syncronized:
-			if not self.isPTZinPosition():
-				self.sendPTZCommand()
+			#if self.isPTZinPosition():
+			self.sendPTZCommand()
+			#else:
+			#rospy.logwarn('controlPTZ: not in  position')
 		
 	
 	def isPTZinPosition(self):	
@@ -293,6 +212,9 @@ class AxisPTZ(threading.Thread):
 			@return True if camera has the desired position / settings
 		"""
 		if abs(self.current_ptz.pan - self.desired_pan) <= self.error_pos and abs(self.current_ptz.tilt - self.desired_tilt) <= self.error_pos and abs(self.current_ptz.zoom - self.desired_zoom) <= self.error_zoom:
+			'''rospy.logwarn('isPTZinPosition: pan %.3lf vs %.3lf', self.current_ptz.pan, self.desired_pan)
+			rospy.logwarn('isPTZinPosition: tilt %.3lf vs %.3lf', self.current_ptz.tilt, self.desired_tilt)
+			rospy.logwarn('isPTZinPosition: zoom %.3lf vs %.3lf', self.current_ptz.zoom, self.desired_zoom)'''
 			return True
 		else:
 			return False
@@ -301,11 +223,14 @@ class AxisPTZ(threading.Thread):
 		"""
 			Sends the ptz to the camera
 		"""
+		pan = math.degrees(self.desired_pan)
+		tilt = math.degrees(self.desired_tilt)
+		zoom = self.desired_zoom
 		conn = httplib.HTTPConnection(self.hostname)
-		params = { 'pan': self.desired_pan, 'tilt': self.desired_tilt, 'zoom': self.desired_zoom }
+		params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
 		
 		try:		
-			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",self.desired_pan, self.desired_tilt, self.desired_zoom)
+			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
 			url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
 			#rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
 			conn.request("GET", url)
@@ -331,8 +256,8 @@ class AxisPTZ(threading.Thread):
 			if response.status == 200:
 				body = response.read()
 				params = dict([s.split('=',2) for s in body.splitlines()])
-				self.current_ptz.pan = float(params['pan'])
-				self.current_ptz.tilt = float(params['tilt'])
+				self.current_ptz.pan = math.radians(float(params['pan']))
+				self.current_ptz.tilt = math.radians(float(params['tilt']))
 				
 				if params.has_key('zoom'):
 					self.current_ptz.zoom = float(params['zoom'])
@@ -361,7 +286,7 @@ class AxisPTZ(threading.Thread):
 				self.desired_pan = self.current_ptz.pan 
 				self.desired_tilt = self.current_ptz.tilt
 				self.desired_zoom = self.current_ptz.zoom
-				
+				#rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
 				self.ptz_syncronized = True
 			
 			self.error_reading = False
@@ -421,7 +346,7 @@ class AxisPTZ(threading.Thread):
 		msg.header.stamp = rospy.Time.now()
 		
 		msg.name = [self.pan_joint, self.tilt_joint]
-		msg.position = [math.radians(self.current_ptz.pan), math.radians(self.current_ptz.tilt)]
+		msg.position = [self.current_ptz.pan, self.current_ptz.tilt]
 		msg.velocity = [0.0, 0.0]
 		msg.effort = [0.0, 0.0]
 		
@@ -766,11 +691,11 @@ def main():
 	  'max_tilt_value': 1.57,
 	  'max_zoom_value': 20000,
 	  'min_zoom_value': 0,
-	  'home_pan_value': -3.14,
-	  'home_tilt_value': 0.0,
+	  'home_pan_value': 0.0,
+	  'home_tilt_value': 0.79,
 	  'ptz_rate': 5.0,
-	  'error_pos': 0.5,
-	  'error_zoom': 99,
+	  'error_pos': 0.02,
+	  'error_zoom': 99.0,
 	  'joint_states_topic': 'joint_states',
 	  'use_control_timeout': False,
 	  'control_timeout_value': 5.0,
