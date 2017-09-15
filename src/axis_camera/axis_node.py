@@ -91,6 +91,7 @@ class AxisPTZ(threading.Thread):
 		self.use_control_timeout = args['use_control_timeout']
 		self.control_timeout_value = args['control_timeout_value']
 		self.invert_ptz = args['invert_ptz']
+		self.initialization_delay = args['initialization_delay']
 		
 		self.current_ptz = AxisMsg()
 		self.last_msg = ptz()
@@ -314,6 +315,7 @@ class AxisPTZ(threading.Thread):
 		"""
 		r = rospy.Rate(self.rate)
 		
+		
 		while not rospy.is_shutdown():
 			
 			self.getPTZState()
@@ -442,6 +444,7 @@ class Axis():
 		self.axis_frame_id = args['frame']
 		self.ptz = args['ptz'] # Flag to add the ptz control
 		self.profile = args['profile']
+		self.initialization_delay = args['initialization_delay']
 		
 		# by default is stopped
 		self.run_camera = False
@@ -513,6 +516,10 @@ class Axis():
 		"""
 			Executes the main loop of the node
 		"""
+		rospy.logwarn('%s:run: waiting %.3lf secs before running', rospy.get_name(), self.initialization_delay)
+		time.sleep(self.initialization_delay)
+		
+		
 		if self.ptz:
 			# Starts Thread for PTZ
 			self.ptz_interface.start()
@@ -699,7 +706,8 @@ def main():
 	  'joint_states_topic': 'joint_states',
 	  'use_control_timeout': False,
 	  'control_timeout_value': 5.0,
-	  'invert_ptz': False
+	  'invert_ptz': False,
+	  'initialization_delay': 0.0 # time waiting before running
 	}
 	args = {}
 	

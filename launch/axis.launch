@@ -25,6 +25,7 @@
 	<arg name="frame_id" default="camera"/>
 	<arg name="pan_joint" default="$(arg prefix)$(arg node_name)_pan_joint"/>
 	<arg name="tilt_joint" default="$(arg prefix)$(arg node_name)_tilt_joint"/>
+	<arg name="initialization_delay" default="0.0"/>
 
 	<param name="hostname" value="$(arg ip_address)"/>
 	<param name="username" value="$(arg username)" />
@@ -39,6 +40,7 @@
 	<param name="enable_auth" value="$(arg enable_auth)"/>
 	<param name="pan_joint" value="$(arg pan_joint)"/>
 	<param name="tilt_joint" value="$(arg tilt_joint)"/>
+	<param name="initialization_delay" value="$(arg initialization_delay)"/>
 
 	<rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
 
