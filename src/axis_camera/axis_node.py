@@ -118,11 +118,11 @@ class AxisPTZ(threading.Thread):
 		"""
 			Sets the ros connections
 		"""
-		self.pub = rospy.Publisher("~camera_params", AxisMsg, self)
+		self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
 		#self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
 		self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
 		# Publish the joint state of the pan & tilt
-		self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState)
+		self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
 		
 		# Services
 		self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
@@ -478,8 +478,8 @@ class Axis():
 		self.cinfo = camera_info_manager.CameraInfoManager(cname = self.camera_model, url = self.camera_info_url, namespace = rospy.get_name())
 		self.cinfo.loadCameraInfo()
 		# Mirar de cambiar por ImageTransport
-		self.compressed_image_publisher = rospy.Publisher("%scompressed"%rospy.get_namespace(), CompressedImage, self)
-		self.caminfo_publisher = rospy.Publisher("%scamera_info"%rospy.get_namespace(), CameraInfo, self)
+		self.compressed_image_publisher = rospy.Publisher("%scompressed"%rospy.get_namespace(), CompressedImage, self, queue_size=10)
+		self.caminfo_publisher = rospy.Publisher("%scamera_info"%rospy.get_namespace(), CameraInfo, self, queue_size=10)
 		
 		# Sets the url
 		self.url = 'http://%s/axis-cgi/mjpg/video.cgi?streamprofile=%s&camera=%d&fps=%d&compression=%d' % (self.hostname, self.profile, self.camera_number, self.fps, self.compression)
