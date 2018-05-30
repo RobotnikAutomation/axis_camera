@@ -1,6 +1,5 @@
 <?xml version="1.0"?>
 <launch>
-
 	<arg name="prefix" default=""/>
 	<arg name="node_name" default="axis_camera"/>
 	<arg name="ip_address" default="192.168.0.185"/>
@@ -28,15 +27,15 @@
 	<arg name="initialization_delay" default="0.0"/>
 
 	<param name="hostname" value="$(arg ip_address)"/>
-	<param name="username" value="$(arg username)" />
-	<param name="password" value="$(arg password)" />
-	<param name="camera_number" value="$(arg camera_number)" />
-	<param name="camera_model" value="$(arg camera_model)"/>
-	<param name="camera_id" value="$(arg camera_id)"/>
-	<param name="fps" value="$(arg fps)"/>
-	<param name="compression" value="$(arg compression)"/>
-	<param name="frame" value="$(arg frame_id)"/>
-	<param name="profile" value="$(arg profile)"/>
+-	<param name="username" value="$(arg username)" />
+-	<param name="password" value="$(arg password)" />
+-	<param name="camera_number" value="$(arg camera_number)" />
+-	<param name="camera_model" value="$(arg camera_model)"/>
+-	<param name="camera_id" value="$(arg camera_id)"/>
+-	<param name="fps" value="$(arg fps)"/>
+-	<param name="compression" value="$(arg compression)"/>
+-	<param name="frame" value="$(arg frame_id)"/>
+-	<param name="profile" value="$(arg profile)"/>
 	<param name="enable_auth" value="$(arg enable_auth)"/>
 	<param name="pan_joint" value="$(arg pan_joint)"/>
 	<param name="tilt_joint" value="$(arg tilt_joint)"/>
