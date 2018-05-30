@@ -68,8 +68,12 @@ rosrun image_view image_view image:=/axis/image_color
 You can send your camera PTZ commands via the `/axis/axis_camera/ptz_command` topic:
 
 ```
-rostopic pub /axis/axis_camera/ptz_command robotnik_msgs/ptz "pan: 20.0
-tilt: -10.0
+rostopic pub /axis/axis_camera/ptz_command robotnik_msgs/ptz "pan: 0.5
+tilt: -1.0
 zoom: 2.0
 relative: false" 
 ```
+
+* params pan and tilt as float (radians)
+* param zoom as float (proportional zoom between 0 and 9999)
+* param relative as bool (increases the current pan,tilt,zoom relative to the current values)
