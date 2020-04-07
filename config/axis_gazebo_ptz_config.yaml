@@ -1,0 +1,17 @@
+ptz: true
+# Internal configuration of the camera. It can instantly flip the camera head 180 degrees and continue to pan beyond its zero point
+autoflip: false
+# Internal configuration of the camera. It can automatically flip the image electronically 180 degrees, and continue to follow the person in the correct orientation, without delay.
+eflip: false
+#
+pan_joint: front_ptz_camera_pan_joint
+tilt_joint: front_ptz_camera_tilt_joint
+# radians
+min_pan_value: -2.97
+max_pan_value: 2.97
+min_tilt_value: -1.57
+max_tilt_value: 1.57
+min_zoom_value: 0
+max_zoom_value: 9999
+# Flag to invert received/sent pan and tilt values
+invert_ptz: true

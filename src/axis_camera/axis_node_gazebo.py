@@ -47,7 +47,7 @@ import rospkg, rospy
 import os
 
 
-from std_msgs.msg import String, Bool
+from std_msgs.msg import String, Bool, Float64
 from std_srvs.srv import Empty
 from sensor_msgs.msg import CompressedImage, CameraInfo
 import camera_info_manager
@@ -66,10 +66,6 @@ class AxisPTZ(threading.Thread):
         Class interface to set the Pan Tilt Zoom of the camera
     """
     def __init__(self, args):
-        self.enable_auth = args['enable_auth']
-        self.hostname = args['hostname']
-        self.username = args['username']
-        self.password = args['password']
         self.rate = args['ptz_rate']
 
         self.autoflip = args['autoflip']
@@ -77,6 +73,8 @@ class AxisPTZ(threading.Thread):
         self.eflip = args['eflip']
         self.tilt_joint = args['tilt_joint']
         self.pan_joint = args['pan_joint']
+        self.tilt_joint_command = args['tilt_joint_command']
+        self.pan_joint_command = args['pan_joint_command']
         self.min_pan_value = args['min_pan_value']
         self.max_pan_value = args['max_pan_value']
         self.min_tilt_value = args['min_tilt_value']
@@ -100,7 +98,7 @@ class AxisPTZ(threading.Thread):
         self.daemon = True
         self.run_control = True
         # Flag to know if the current params of the camera has been read
-        self.ptz_syncronized = False
+        self.ptz_syncronized = True
         # used in control position (degrees)
 
         self.desired_pan = 0.0
@@ -119,10 +117,12 @@ class AxisPTZ(threading.Thread):
             Sets the ros connections
         """
         self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
+        self.pub_command_pan = rospy.Publisher(self.pan_joint_command, Float64, queue_size=10)
+        self.pub_command_tilt = rospy.Publisher(self.tilt_joint_command, Float64, queue_size=10)
+
         #self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
-        # Publish the joint state of the pan & tilt
-        self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
+        self.sub_joint_states = rospy.Subscriber("joint_states", JointState, self.jointStateCb)
 
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
@@ -224,24 +224,20 @@ class AxisPTZ(threading.Thread):
         """
             Sends the ptz to the camera
         """
-        pan = math.degrees(self.desired_pan)
-        tilt = math.degrees(self.desired_tilt)
-        zoom = self.desired_zoom
-        conn = httplib.HTTPConnection(self.hostname)
-        params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
+        msg = Float64()
+        msg.data = self.desired_pan
+        self.pub_command_pan.publish(msg)
+        msg.data = self.desired_tilt
+        self.pub_command_tilt.publish(msg)
 
+    def jointStateCb(self, msg):
         try:
-            #rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
-            url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
-            #rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
-            conn.request("GET", url)
-            if conn.getresponse().status != 204:
-                rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, url) )
-            #print "%s/axis-cgi/com/ptz.cgi?camera=1&%s. Response =%d" % (rospy.get_name(), urllib.urlencode(params), conn.getresponse().status)
-        except socket.error, e:
-            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
-        except socket.timeout,e:
-            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
+            pan_index = msg.name.index(self.pan_joint)
+            self.current_ptz.pan = msg.position[pan_index]
+            tilt_index = msg.name.index(self.tilt_joint)
+            self.current_ptz.tilt = msg.position[tilt_index]
+        except:
+            rospy.logwarn_throttle(10, "Cannot find " + self.pan_joint + " in joint_state message")
 
 
     def getPTZState(self):
@@ -318,7 +314,7 @@ class AxisPTZ(threading.Thread):
 
         while not rospy.is_shutdown():
 
-            self.getPTZState()
+            # self.getPTZState()
 
             if(self.use_control_timeout):
                 self.manageControl()
@@ -342,17 +338,6 @@ class AxisPTZ(threading.Thread):
         """
         # Publishes the current PTZ values
         self.pub.publish(self.current_ptz)
-
-        # Publish the joint state
-        msg = JointState()
-        msg.header.stamp = rospy.Time.now()
-
-        msg.name = [self.pan_joint, self.tilt_joint]
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt]
-        msg.velocity = [0.0, 0.0]
-        msg.effort = [0.0, 0.0]
-
-        self.joint_state_publisher.publish(msg)
 
 
     def get_data(self):
@@ -692,6 +677,8 @@ def main():
       'eflip': False,
       'pan_joint': 'pan',
       'tilt_joint': 'tilt',
+      'pan_joint_command': 'joint_pan_position_controller/command',
+      'tilt_joint_command': 'joint_tilt_position_controller/command',
       'min_pan_value': -2.97,
       'max_pan_value': 2.97,
       'min_tilt_value': 0,
