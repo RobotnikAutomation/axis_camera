@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="prefix" default=""/>
+    <arg name="node_name" default="axis_camera"/>
+    <arg name="ip_address" default="192.168.0.185"/>
+    <arg name="username" default="root"/>
+    <arg name="password" default="R0b0tn1K"/>
+    <arg name="run_republish" default="false"/>
+    <arg name="ptz_enabled" default="true"/>
+    <arg name="camera_id" default="1"/>
+    <arg name="camera_number" default="1"/>
+    <arg name="camera_model" default="axis_gazebo"/>
+    <!-- fps of the stream (0 max) -->
+    <arg name="fps" default="0"/>
+    <!-- compression applied to the stream (0 no compression) -->
+    <arg name="compression" default="0"/>
+    <arg name="ptz_config_file" default="$(find axis_camera)/config/$(arg camera_model)_ptz_config.yaml"/>
+    <!-- Loads an internal profile of the camera -->
+    <arg name="profile" default="TestQuality"/>
+    <!-- enables the authentication -->
+    <arg name="enable_auth" default="false"/> 
+    <arg name="camera_info_url" default="package://axis_camera/data/$(arg camera_model).yaml"/>
+
+    <arg name="frame_id" default="camera"/>
+    <arg name="pan_joint" default="$(arg prefix)$(arg node_name)_pan_joint"/>
+    <arg name="tilt_joint" default="$(arg prefix)$(arg node_name)_tilt_joint"/>
+    <arg name="initialization_delay" default="0.0"/>
+
+    <param name="hostname" value="$(arg ip_address)"/>
+    <param name="username" value="$(arg username)" />
+    <param name="password" value="$(arg password)" />
+    <param name="camera_number" value="$(arg camera_number)" />
+    <param name="camera_model" value="$(arg camera_model)"/>
+    <param name="camera_id" value="$(arg camera_id)"/>
+    <param name="fps" value="$(arg fps)"/>
+    <param name="compression" value="$(arg compression)"/>
+    <param name="frame" value="$(arg frame_id)"/>
+    <param name="profile" value="$(arg profile)"/>
+    <param name="enable_auth" value="$(arg enable_auth)"/>
+    <param name="pan_joint" value="$(arg pan_joint)"/>
+    <param name="tilt_joint" value="$(arg tilt_joint)"/>
+    <param name="initialization_delay" value="$(arg initialization_delay)"/>
+
+    <rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
+
+    <!-- Important: Every model has its own config file. This config file will depend on the Axis configuration -->
+    <param name="camera_info_url" value="$(arg camera_info_url)"/>
+
+    <node pkg="axis_camera" type="axis_node_gazebo.py" name="$(arg node_name)" output="screen"/>
+    <!-- Republishes from Compressed to raw -->
+    <node pkg="image_transport" type="republish" name="$(arg node_name)_republisher" output="screen" args="compressed in:= raw out:=image_raw" if="$(arg run_republish)"/>
+    <!-- IMAGE PROC: Republish image topics by using camera info -->
+    <node pkg="image_proc" type="image_proc" name="$(arg node_name)_image_proc" output="screen" if="$(arg run_republish)"/>
+
+
+</launch>
+
