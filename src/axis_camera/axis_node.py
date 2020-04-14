@@ -37,7 +37,6 @@ import time
 import threading
 import urllib, urllib2, httplib, httplib2
 import base64
-import Image
 import datetime
 import numpy as np
 import socket

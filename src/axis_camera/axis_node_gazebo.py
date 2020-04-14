@@ -36,7 +36,6 @@ import sys
 import time
 import threading
 import base64
-import Image
 import datetime
 import numpy as np
 import socket
