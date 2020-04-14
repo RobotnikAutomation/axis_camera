@@ -44,7 +44,7 @@ catkin_package(
 catkin_install_python(PROGRAMS src/axis_camera/__init__.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
-catkin_install_python(PROGRAMS src/axis_camera/axis_node.py
+catkin_install_python(PROGRAMS src/axis_camera/axis_node.py src/axis_camera/axis_node_gazebo.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 install(
