@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="ip_address" default="192.168.0.185"/>
+	<arg name="username" default="io"/>
+	<arg name="password" default="io"/>
+
+  <node pkg="axis_camera" type="axis_io.py" name="axis_io" output="screen">
+    <rosparam command="load" file="$(find axis_camera)/config/axis_io.yaml"/>
+    <param name="hostname" value="$(arg ip_address)" />
+    <param name="username" value="$(arg username)" />
+    <param name="password" value="$(arg password)" />
+  </node>
+
+</launch>
