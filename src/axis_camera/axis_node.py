@@ -40,7 +40,6 @@ import urllib2
 import httplib
 import httplib2
 import base64
-import Image
 import datetime
 import numpy as np
 import socket
