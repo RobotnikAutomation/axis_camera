@@ -81,6 +81,7 @@ class AxisPTZ(threading.Thread):
 		self.max_pan_value = args['max_pan_value']
 		self.min_tilt_value = args['min_tilt_value']
 		self.max_tilt_value = args['max_tilt_value']
+		self.use_only_zoom = args['use_only_zoom']
 		self.min_zoom_value = args['min_zoom_value']
 		self.max_zoom_value = args['max_zoom_value']
 		self.home_pan_value = args['home_pan_value']
@@ -228,8 +229,12 @@ class AxisPTZ(threading.Thread):
 		tilt = math.degrees(self.desired_tilt)
 		zoom = self.desired_zoom
 		conn = httplib.HTTPConnection(self.hostname)
-		params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
-		
+
+		if self.use_only_zoom != True:
+			params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
+		else:
+			params = {'zoom': zoom }
+
 		try:		
 			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
 			url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
@@ -257,8 +262,10 @@ class AxisPTZ(threading.Thread):
 			if response.status == 200:
 				body = response.read()
 				params = dict([s.split('=',2) for s in body.splitlines()])
-				self.current_ptz.pan = math.radians(float(params['pan']))
-				self.current_ptz.tilt = math.radians(float(params['tilt']))
+
+				if self.use_only_zoom != True:
+					self.current_ptz.pan = math.radians(float(params['pan']))
+					self.current_ptz.tilt = math.radians(float(params['tilt']))
 				
 				if params.has_key('zoom'):
 					self.current_ptz.zoom = float(params['zoom'])
@@ -697,6 +704,7 @@ def main():
 	  'min_tilt_value': 0,
 	  'max_tilt_value': 1.57,
 	  'max_zoom_value': 20000,
+	  'use_only_zoom': False,
 	  'min_zoom_value': 0,
 	  'home_pan_value': 0.0,
 	  'home_tilt_value': 0.79,
