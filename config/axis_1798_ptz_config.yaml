@@ -3,6 +3,7 @@ ptz: true
 autoflip: false
 # Internal configuration of the camera. It can automatically flip the image electronically 180 degrees, and continue to follow the person in the correct orientation, without delay.
 eflip: false
+publish_joints: false
 #
 use_only_zoom: true
 min_zoom_value: 0
