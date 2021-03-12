@@ -75,6 +75,7 @@ class AxisPTZ(threading.Thread):
 		self.autoflip = args['autoflip']
 		self.eflip = args['eflip']
 		self.eflip = args['eflip']
+		self.publish_joints = args['publish_joints'] 
 		self.tilt_joint = args['tilt_joint']
 		self.pan_joint = args['pan_joint']
 		self.min_pan_value = args['min_pan_value']
@@ -122,8 +123,10 @@ class AxisPTZ(threading.Thread):
 		self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
 		#self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
 		self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
+		
 		# Publish the joint state of the pan & tilt
-		self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
+		if self.publish_joints == True:
+			self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
 		
 		# Services
 		self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
@@ -359,7 +362,8 @@ class AxisPTZ(threading.Thread):
 		msg.velocity = [0.0, 0.0]
 		msg.effort = [0.0, 0.0]
 		
-		self.joint_state_publisher.publish(msg)
+		if self.publish_joints == True:
+			self.joint_state_publisher.publish(msg)
 		
 		
 	def get_data(self):
@@ -697,6 +701,7 @@ def main():
 	  'ptz': False,
 	  'autoflip': False,
 	  'eflip': False,
+	  'publish_joints': True,
 	  'pan_joint': 'pan',
 	  'tilt_joint': 'tilt',
 	  'min_pan_value': -2.97,
