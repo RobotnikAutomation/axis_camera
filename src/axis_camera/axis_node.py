@@ -75,14 +75,12 @@ class AxisPTZ(threading.Thread):
 		self.autoflip = args['autoflip']
 		self.eflip = args['eflip']
 		self.eflip = args['eflip']
-		self.publish_joints = args['publish_joints'] 
 		self.tilt_joint = args['tilt_joint']
 		self.pan_joint = args['pan_joint']
 		self.min_pan_value = args['min_pan_value']
 		self.max_pan_value = args['max_pan_value']
 		self.min_tilt_value = args['min_tilt_value']
 		self.max_tilt_value = args['max_tilt_value']
-		self.use_only_zoom = args['use_only_zoom']
 		self.min_zoom_value = args['min_zoom_value']
 		self.max_zoom_value = args['max_zoom_value']
 		self.home_pan_value = args['home_pan_value']
@@ -123,10 +121,8 @@ class AxisPTZ(threading.Thread):
 		self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
 		#self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
 		self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
-		
 		# Publish the joint state of the pan & tilt
-		if self.publish_joints == True:
-			self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
+		self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
 		
 		# Services
 		self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
@@ -143,7 +139,6 @@ class AxisPTZ(threading.Thread):
 
 		
 	def setCommandPTZ(self, command):
-		
 		# Save time of requested command
 		if(self.use_control_timeout):
 			self.last_command_time = rospy.get_rostime()
@@ -160,12 +155,11 @@ class AxisPTZ(threading.Thread):
 			new_zoom = self.desired_zoom + command.zoom
 
 		else:
-			new_pan = math.degrees(invert_command*command.pan)
-			new_tilt = math.degrees(invert_command*command.tilt)
+			new_pan = invert_command*command.pan
+			new_tilt = invert_command*command.tilt
+			# new_pan = math.degrees(invert_command*command.pan)
+			# new_tilt = math.degrees(invert_command*command.tilt)
 			new_zoom = command.zoom
-		
-		
-		
 		# Applies limit restrictions
 		if new_pan > self.max_pan_value:
 			new_pan = self.max_pan_value
@@ -183,9 +177,6 @@ class AxisPTZ(threading.Thread):
 		self.desired_pan = new_pan
 		self.desired_tilt = new_tilt
 		self.desired_zoom = new_zoom
-		
-		
-		
 	def homeService(self, req):
 		
 		# Set home values
@@ -230,14 +221,12 @@ class AxisPTZ(threading.Thread):
 		"""
 		pan = math.degrees(self.desired_pan)
 		tilt = math.degrees(self.desired_tilt)
+		#pan = self.desired_pan
+		#tilt = self.desired_tilt
 		zoom = self.desired_zoom
 		conn = httplib.HTTPConnection(self.hostname)
-
-		if self.use_only_zoom != True:
-			params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
-		else:
-			params = {'zoom': zoom }
-
+		params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
+		
 		try:		
 			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
 			url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
@@ -265,10 +254,8 @@ class AxisPTZ(threading.Thread):
 			if response.status == 200:
 				body = response.read()
 				params = dict([s.split('=',2) for s in body.splitlines()])
-
-				if self.use_only_zoom != True:
-					self.current_ptz.pan = math.radians(float(params['pan']))
-					self.current_ptz.tilt = math.radians(float(params['tilt']))
+				self.current_ptz.pan = math.radians(float(params['pan']))
+				self.current_ptz.tilt = math.radians(float(params['tilt']))
 				
 				if params.has_key('zoom'):
 					self.current_ptz.zoom = float(params['zoom'])
@@ -362,8 +349,7 @@ class AxisPTZ(threading.Thread):
 		msg.velocity = [0.0, 0.0]
 		msg.effort = [0.0, 0.0]
 		
-		if self.publish_joints == True:
-			self.joint_state_publisher.publish(msg)
+		self.joint_state_publisher.publish(msg)
 		
 		
 	def get_data(self):
@@ -701,7 +687,6 @@ def main():
 	  'ptz': False,
 	  'autoflip': False,
 	  'eflip': False,
-	  'publish_joints': True,
 	  'pan_joint': 'pan',
 	  'tilt_joint': 'tilt',
 	  'min_pan_value': -2.97,
@@ -709,7 +694,6 @@ def main():
 	  'min_tilt_value': 0,
 	  'max_tilt_value': 1.57,
 	  'max_zoom_value': 20000,
-	  'use_only_zoom': False,
 	  'min_zoom_value': 0,
 	  'home_pan_value': 0.0,
 	  'home_tilt_value': 0.79,
@@ -744,4 +728,3 @@ def main():
 
 if __name__ == "__main__":
 	main()
-	
