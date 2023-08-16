@@ -9,7 +9,7 @@
 	<arg name="ptz_enabled" default="true"/>
 	<arg name="camera_id" default="1"/>
 	<arg name="camera_number" default="1"/>
-	<arg name="camera_model" default="axis_p5534"/>
+	<arg name="camera_model" default="axis_m5525"/>
 	<!-- fps of the stream (0 max) -->
 	<arg name="fps" default="0"/>
 	<!-- compression applied to the stream (0 no compression) -->
