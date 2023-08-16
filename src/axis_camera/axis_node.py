@@ -100,6 +100,7 @@ class AxisPTZ(threading.Thread):
         self.control_timeout_value = args['control_timeout_value']
         self.invert_ptz = args['invert_ptz']
         self.initialization_delay = args['initialization_delay']
+        self.send_constantly = args['send_constantly']
 
         self.current_ptz = AxisMsg()
         self.last_msg = ptz()
@@ -142,8 +143,8 @@ class AxisPTZ(threading.Thread):
         """
         #print(msg)
         self.setCommandPTZ(msg)
-        
-        
+        if not self.send_constantly:
+            self.sendPTZCommand()
 
         
     def setCommandPTZ(self, command):
@@ -185,6 +186,7 @@ class AxisPTZ(threading.Thread):
         self.desired_pan = new_pan
         self.desired_tilt = new_tilt
         self.desired_zoom = new_zoom
+        
     def homeService(self, req):
         
         # Set home values
@@ -195,6 +197,8 @@ class AxisPTZ(threading.Thread):
         home_command.zoom = 0
         
         self.setCommandPTZ(home_command)
+        if not self.send_constantly:
+            self.sendPTZCommand()
         
         return {}
         
@@ -345,7 +349,7 @@ class AxisPTZ(threading.Thread):
                 self.manageControl()
             
             # Performs interaction with the camera if it is enabled
-            if self.run_control:
+            if self.run_control and self.send_constantly:
                 self.controlPTZ()
                 #print('Alive')
             # Publish ROS msgs
@@ -772,7 +776,8 @@ def main():
         'use_control_timeout': False,
         'control_timeout_value': 5.0,
         'invert_ptz': False,
-        'initialization_delay': 0.0  # time waiting before running
+        'initialization_delay': 0.0,  # time waiting before running
+        'send_constantly': True
     }
     args = {}
 
