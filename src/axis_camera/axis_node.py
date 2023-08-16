@@ -35,10 +35,16 @@
 import sys
 import time
 import threading
-import urllib
-import urllib2
-import httplib
-import httplib2
+try:
+    import urllib
+    import urllib2
+except:
+	import urllib.request, urllib.error, urllib.parse
+try:
+    import httplib
+    import httplib2
+except:
+    import http.client
 import base64
 from PIL import Image
 import datetime
@@ -59,7 +65,6 @@ from sensor_msgs.msg import JointState
 
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
-from axis_camera.srv import set_ptz
 import diagnostic_updater
 import diagnostic_msgs
 
@@ -77,7 +82,6 @@ class AxisPTZ(threading.Thread):
         self.rate = args['ptz_rate']
 
         self.autoflip = args['autoflip']
-        self.eflip = args['eflip']
         self.eflip = args['eflip']
         self.tilt_joint = args['tilt_joint']
         self.pan_joint = args['pan_joint']
@@ -132,296 +136,312 @@ class AxisPTZ(threading.Thread):
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
 
  
-	def commandPTZCb(self, msg):
-		"""
-			Command for ptz movements
-		"""
-		#print msg
-		self.setCommandPTZ(msg)
-		
-		
+    def commandPTZCb(self, msg):
+        """
+            Command for ptz movements
+        """
+        #print(msg)
+        self.setCommandPTZ(msg)
+        
+        
 
-		
-	def setCommandPTZ(self, command):
-		# Save time of requested command
-		if(self.use_control_timeout):
-			self.last_command_time = rospy.get_rostime()
-			#rospy.loginfo("Last command time %i %i", self.last_command_time.secs, self.last_command_time.nsecs)
-		if self.invert_ptz:
-			invert_command = -1.0
-		else:
-			invert_command = 1.0
-		# Need to convert from rad to degree
-		# relative motion
-		if command.relative:
-			new_pan = invert_command*command.pan + self.desired_pan
-			new_tilt = invert_command*command.tilt + self.desired_tilt
-			new_zoom = self.desired_zoom + command.zoom
+        
+    def setCommandPTZ(self, command):
+        # Save time of requested command
+        if(self.use_control_timeout):
+            self.last_command_time = rospy.get_rostime()
+            #rospy.loginfo("Last command time %i %i", self.last_command_time.secs, self.last_command_time.nsecs)
+        if self.invert_ptz:
+            invert_command = -1.0
+        else:
+            invert_command = 1.0
+        # Need to convert from rad to degree
+        # relative motion
+        if command.relative:
+            new_pan = invert_command*command.pan + self.desired_pan
+            new_tilt = invert_command*command.tilt + self.desired_tilt
+            new_zoom = self.desired_zoom + command.zoom
 
-		else:
-			new_pan = invert_command*command.pan
-			new_tilt = invert_command*command.tilt
-			# new_pan = math.degrees(invert_command*command.pan)
-			# new_tilt = math.degrees(invert_command*command.tilt)
-			new_zoom = command.zoom
-		# Applies limit restrictions
-		if new_pan > self.max_pan_value:
-			new_pan = self.max_pan_value
-		elif new_pan < self.min_pan_value:
-			new_pan = self.min_pan_value
-		if new_tilt > self.max_tilt_value:
-			new_tilt = self.max_tilt_value
-		elif new_tilt < self.min_tilt_value:
-			new_tilt = self.min_tilt_value
-		if new_zoom > self.max_zoom_value:
-			new_zoom = self.max_zoom_value
-		elif new_zoom < self.min_zoom_value:
-			new_zoom = self.min_zoom_value
-			
-		self.desired_pan = new_pan
-		self.desired_tilt = new_tilt
-		self.desired_zoom = new_zoom
-	def homeService(self, req):
-		
-		# Set home values
-		home_command = ptz()
-		home_command.relative = False
-		home_command.pan = self.home_pan_value
-		home_command.tilt = self.home_tilt_value
-		home_command.zoom = 0
-		
-		self.setCommandPTZ(home_command)
-		
-		return {}
-		
-		
-	def controlPTZ(self):
-		"""
-			Performs the control of the camera ptz
-		"""
-		# Only if it's syncronized
-		if self.ptz_syncronized:
-			#if self.isPTZinPosition():
-			self.sendPTZCommand()
-			#else:
-			#rospy.logwarn('controlPTZ: not in  position')
-		
-	
-	def isPTZinPosition(self):	
-		"""
-			@return True if camera has the desired position / settings
-		"""
-		if abs(self.current_ptz.pan - self.desired_pan) <= self.error_pos and abs(self.current_ptz.tilt - self.desired_tilt) <= self.error_pos and abs(self.current_ptz.zoom - self.desired_zoom) <= self.error_zoom:
-			'''rospy.logwarn('isPTZinPosition: pan %.3lf vs %.3lf', self.current_ptz.pan, self.desired_pan)
-			rospy.logwarn('isPTZinPosition: tilt %.3lf vs %.3lf', self.current_ptz.tilt, self.desired_tilt)
-			rospy.logwarn('isPTZinPosition: zoom %.3lf vs %.3lf', self.current_ptz.zoom, self.desired_zoom)'''
-			return True
-		else:
-			return False
-	
-	def sendPTZCommand(self):
-		"""
-			Sends the ptz to the camera
-		"""
-		pan = math.degrees(self.desired_pan)
-		tilt = math.degrees(self.desired_tilt)
-		#pan = self.desired_pan
-		#tilt = self.desired_tilt
-		zoom = self.desired_zoom
-		conn = httplib.HTTPConnection(self.hostname)
-		params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
-		
-		try:		
-			#rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
-			url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
-			#rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
-			conn.request("GET", url)
-			if conn.getresponse().status != 204:
-				rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, url) )
-			#print "%s/axis-cgi/com/ptz.cgi?camera=1&%s. Response =%d" % (rospy.get_name(), urllib.urlencode(params), conn.getresponse().status)
-		except socket.error, e:
-			rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
-		except socket.timeout,e:
-			rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
-			
-		
-	def getPTZState(self):
-		"""
-			Gets the current ptz state/position of the camera
-		"""
-		conn = httplib.HTTPConnection(self.hostname)
+        else:
+            new_pan = invert_command*command.pan
+            new_tilt = invert_command*command.tilt
+            # new_pan = math.degrees(invert_command*command.pan)
+            # new_tilt = math.degrees(invert_command*command.tilt)
+            new_zoom = command.zoom
+        # Applies limit restrictions
+        if new_pan > self.max_pan_value:
+            new_pan = self.max_pan_value
+        elif new_pan < self.min_pan_value:
+            new_pan = self.min_pan_value
+        if new_tilt > self.max_tilt_value:
+            new_tilt = self.max_tilt_value
+        elif new_tilt < self.min_tilt_value:
+            new_tilt = self.min_tilt_value
+        if new_zoom > self.max_zoom_value:
+            new_zoom = self.max_zoom_value
+        elif new_zoom < self.min_zoom_value:
+            new_zoom = self.min_zoom_value
+            
+        self.desired_pan = new_pan
+        self.desired_tilt = new_tilt
+        self.desired_zoom = new_zoom
+    def homeService(self, req):
+        
+        # Set home values
+        home_command = ptz()
+        home_command.relative = False
+        home_command.pan = self.home_pan_value
+        home_command.tilt = self.home_tilt_value
+        home_command.zoom = 0
+        
+        self.setCommandPTZ(home_command)
+        
+        return {}
+        
+        
+    def controlPTZ(self):
+        """
+            Performs the control of the camera ptz
+        """
+        # Only if it's syncronized
+        if self.ptz_syncronized:
+            #if self.isPTZinPosition():
+            self.sendPTZCommand()
+            #else:
+            #rospy.logwarn('controlPTZ: not in  position')
+        
 
-		params = { 'query':'position' }
-		try:
-			conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.urlencode(params))
-			response = conn.getresponse()
-			if response.status == 200:
-				body = response.read()
-				params = dict([s.split('=',2) for s in body.splitlines()])
-				self.current_ptz.pan = math.radians(float(params['pan']))
-				self.current_ptz.tilt = math.radians(float(params['tilt']))
-				
-				if params.has_key('zoom'):
-					self.current_ptz.zoom = float(params['zoom'])
-				else:
-					self.current_ptz.zoom = 0.0
-				# Optional params (depending on model)
-				if params.has_key('iris'):
-					self.current_ptz.iris = float(params['iris'])
-				else:
-					self.current_ptz.iris = 0.0
-				if params.has_key('focus'):
-					self.current_ptz.focus = float(params['focus'])
-				else:
-					self.current_ptz.focus = 0.0
-				if params.has_key('autofocus'):
-					self.current_ptz.autofocus = (params['autofocus'] == 'on')
-				else:
-					self.current_ptz.autofocus = False
-				if params.has_key('autoiris'):
-					self.current_ptz.autoiris = (params['autoiris'] == 'on')
-				else:
-					self.current_ptz.autoiris = False
-			
-			# First time saves the current values
-			if not self.ptz_syncronized:
-				self.desired_pan = self.current_ptz.pan 
-				self.desired_tilt = self.current_ptz.tilt
-				self.desired_zoom = self.current_ptz.zoom
-				#rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
-				self.ptz_syncronized = True
-			
-			self.error_reading = False
-			
-		except socket.error, e:
-			rospy.logerr('%s:getPTZState: error connecting the camera: %s '%(rospy.get_name(),e))
-			self.error_reading = True
-			self.error_reading_msg = e
-		except socket.timeout,e:
-			rospy.logerr('%s:getPTZState: error connecting the camera: %s '%(rospy.get_name(),e))
-			self.error_reading = True
-			self.error_reading_msg = e
-		except ValueError, e:
-			rospy.logerr('%s:getPTZState: received corrupted data: %s '%(rospy.get_name(),e))
-			self.error_reading = True
-			self.error_reading_msg = e
-			
-		#print 'Get state'
-		#self.axis.pub.publish(self.msg)
-		
-		
-	def run(self):
-		"""
-			Executes the thread
-		"""
-		r = rospy.Rate(self.rate)
-		
-		
-		while not rospy.is_shutdown():
-			
-			self.getPTZState()
-			
-			if(self.use_control_timeout):
-				self.manageControl()
-			
-			# Performs interaction with the camera if it is enabled
-			if self.run_control:
-				self.controlPTZ()
-				#print 'Alive'
-			# Publish ROS msgs
-			self.publishROS()
-				
-			
-			r.sleep()
-		
-		print 'Bye!'
-	
-	
-	def publishROS(self):
-		"""
-			Publish to ROS server
-		"""
-		# Publishes the current PTZ values
-		self.pub.publish(self.current_ptz)
-		
-		# Publish the joint state
-		msg = JointState()
-		msg.header.stamp = rospy.Time.now()
-		
-		msg.name = [self.pan_joint, self.tilt_joint]
-		msg.position = [self.current_ptz.pan, self.current_ptz.tilt]
-		msg.velocity = [0.0, 0.0]
-		msg.effort = [0.0, 0.0]
-		
-		self.joint_state_publisher.publish(msg)
-		
-		
-	def get_data(self):
-		return self.msg
-	
-	def stop_control(self):
-		"""
-			Stops the control loop
-		"""
-		self.run_control = False
-	
-	def start_control(self):
-		"""
-			Starts the control loop
-		"""
-		self.run_control = True
-		
-	def manageControl(self):
-		"""
-			Gets/releases ptz control using a timeout
-		"""
-		
-		if(rospy.get_rostime() - self.last_command_time < self.command_timeout):
-			if not self.run_control:
-				self.start_control()
-		else:
-			if self.run_control:
-				self.stop_control()	
-	
-	
-	def peer_subscribe(self, topic_name, topic_publish, peer_publish):
-		"""
-			Callback when a peer has subscribed from a topic
-		"""
-		#print 'Is control loop enabled? %s'%self.run_control
-		
-		
-		if not self.run_control:
-			self.start_control()
-			
-	def peer_unsubscribe(self, topic_name, num_peers):
-		"""
-			Callback when a peer has unsubscribed from a topic
-		"""
-		#print 'Num of peers = %d'%num_peers
-		
-		if num_peers == 0:
-			#print 'Stopping control'
-			self.stop_control()
-			
-	def getStateDiagnostic(self, stat):		
-		"""
-		Callback to analyze the state of ptz the params read from the camera
-		"""
-		
-		if self.error_reading:
-			stat.summary(diagnostic_msgs.msg.DiagnosticStatus.ERROR, "Error getting ptz data: %s" % self.error_reading_msg)
-		else:
-			stat.summary(diagnostic_msgs.msg.DiagnosticStatus.OK, "Reading ptz data")
-		
-		stat.add("rate", self.rate)
-		stat.add("pan", self.current_ptz.pan)
-		stat.add("tilt", self.current_ptz.tilt)
-		stat.add("zoom", self.current_ptz.zoom)
-		
-		return stat
-		
-		
+    def isPTZinPosition(self):	
+        """
+            @return True if camera has the desired position / settings
+        """
+        if abs(self.current_ptz.pan - self.desired_pan) <= self.error_pos and abs(self.current_ptz.tilt - self.desired_tilt) <= self.error_pos and abs(self.current_ptz.zoom - self.desired_zoom) <= self.error_zoom:
+            '''rospy.logwarn('isPTZinPosition: pan %.3lf vs %.3lf', self.current_ptz.pan, self.desired_pan)
+            rospy.logwarn('isPTZinPosition: tilt %.3lf vs %.3lf', self.current_ptz.tilt, self.desired_tilt)
+            rospy.logwarn('isPTZinPosition: zoom %.3lf vs %.3lf', self.current_ptz.zoom, self.desired_zoom)'''
+            return True
+        else:
+            return False
+
+    def sendPTZCommand(self):
+        """
+            Sends the ptz to the camera
+        """
+        pan = math.degrees(self.desired_pan)
+        tilt = math.degrees(self.desired_tilt)
+        #pan = self.desired_pan
+        #tilt = self.desired_tilt
+        zoom = self.desired_zoom
+        try:
+            conn = httplib.HTTPConnection(self.hostname)
+        except:
+            conn = http.client.HTTPConnection(self.hostname)
+        params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
+        
+        try:		
+            #rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
+            try:
+                url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
+            except:
+                url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.parse.urlencode(params)
+
+            #rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
+            conn.request("GET", url)
+            if conn.getresponse().status != 204:
+                rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, url) )
+            #print("%s/axis-cgi/com/ptz.cgi?camera=1&%s. Response =%d" % (rospy.get_name(), urllib.urlencode(params), conn.getresponse().status))
+        except socket.error as e:
+            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
+        except socket.timeout as e:
+            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
+            
+        
+    def getPTZState(self):
+        """
+            Gets the current ptz state/position of the camera
+        """
+        try:
+            conn = httplib.HTTPConnection(self.hostname)
+        except:
+            conn = http.client.HTTPConnection(self.hostname)
+
+        params = { 'query':'position' }
+        try:
+            try:
+                conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.urlencode(params))
+            except:
+                conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.parse.urlencode(params))
+            response = conn.getresponse()
+            if response.status == 200:
+                body = response.read()
+                try:
+                    params = dict([s.split('=',2) for s in body.splitlines()])
+                except:
+                    params = dict([s.decode().split('=',2) for s in body.splitlines()])
+                self.current_ptz.pan = math.radians(float(params['pan']))
+                self.current_ptz.tilt = math.radians(float(params['tilt']))
+                
+                if 'zoom' in params:
+                    self.current_ptz.zoom = float(params['zoom'])
+                else:
+                    self.current_ptz.zoom = 0.0
+                # Optional params (depending on model)
+                if 'iris' in params:
+                    self.current_ptz.iris = float(params['iris'])
+                else:
+                    self.current_ptz.iris = 0.0
+                if 'focus' in params:
+                    self.current_ptz.focus = float(params['focus'])
+                else:
+                    self.current_ptz.focus = 0.0
+                if 'autofocus' in params:
+                    self.current_ptz.autofocus = (params['autofocus'] == 'on')
+                else:
+                    self.current_ptz.autofocus = False
+                if 'autoiris' in params:
+                    self.current_ptz.autoiris = (params['autoiris'] == 'on')
+                else:
+                    self.current_ptz.autoiris = False
+            
+            # First time saves the current values
+            if not self.ptz_syncronized:
+                self.desired_pan = self.current_ptz.pan 
+                self.desired_tilt = self.current_ptz.tilt
+                self.desired_zoom = self.current_ptz.zoom
+                #rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
+                self.ptz_syncronized = True
+            
+            self.error_reading = False
+            
+        except socket.error as e:
+            rospy.logerr('%s:getPTZState: error connecting the camera: %s '%(rospy.get_name(),e))
+            self.error_reading = True
+            self.error_reading_msg = e
+        except socket.timeout as e:
+            rospy.logerr('%s:getPTZState: error connecting the camera: %s '%(rospy.get_name(),e))
+            self.error_reading = True
+            self.error_reading_msg = e
+        except ValueError as e:
+            rospy.logerr('%s:getPTZState: received corrupted data: %s '%(rospy.get_name(),e))
+            self.error_reading = True
+            self.error_reading_msg = e
+            
+        #print('Get state')
+        #self.axis.pub.publish(self.msg)
+        
+        
+    def run(self):
+        """
+            Executes the thread
+        """
+        r = rospy.Rate(self.rate)
+        
+        
+        while not rospy.is_shutdown():
+            
+            self.getPTZState()
+            
+            if(self.use_control_timeout):
+                self.manageControl()
+            
+            # Performs interaction with the camera if it is enabled
+            if self.run_control:
+                self.controlPTZ()
+                #print('Alive')
+            # Publish ROS msgs
+            self.publishROS()
+                
+            
+            r.sleep()
+        
+        print('Bye!')
+
+
+    def publishROS(self):
+        """
+            Publish to ROS server
+        """
+        # Publishes the current PTZ values
+        self.pub.publish(self.current_ptz)
+        
+        # Publish the joint state
+        msg = JointState()
+        msg.header.stamp = rospy.Time.now()
+        
+        msg.name = [self.pan_joint, self.tilt_joint]
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt]
+        msg.velocity = [0.0, 0.0]
+        msg.effort = [0.0, 0.0]
+        
+        self.joint_state_publisher.publish(msg)
+        
+        
+    def get_data(self):
+        return self.msg
+
+    def stop_control(self):
+        """
+            Stops the control loop
+        """
+        self.run_control = False
+
+    def start_control(self):
+        """
+            Starts the control loop
+        """
+        self.run_control = True
+        
+    def manageControl(self):
+        """
+            Gets/releases ptz control using a timeout
+        """
+        
+        if(rospy.get_rostime() - self.last_command_time < self.command_timeout):
+            if not self.run_control:
+                self.start_control()
+        else:
+            if self.run_control:
+                self.stop_control()	
+
+
+    def peer_subscribe(self, topic_name, topic_publish, peer_publish):
+        """
+            Callback when a peer has subscribed from a topic
+        """
+        #print('Is control loop enabled? %s'%self.run_control)
+        
+        
+        if not self.run_control:
+            self.start_control()
+            
+    def peer_unsubscribe(self, topic_name, num_peers):
+        """
+            Callback when a peer has unsubscribed from a topic
+        """
+        #print('Num of peers = %d'%num_peers)
+        
+        if num_peers == 0:
+            #print('Stopping control')
+            self.stop_control()
+            
+    def getStateDiagnostic(self, stat):		
+        """
+        Callback to analyze the state of ptz the params read from the camera
+        """
+        
+        if self.error_reading:
+            stat.summary(diagnostic_msgs.msg.DiagnosticStatus.ERROR, "Error getting ptz data: %s" % self.error_reading_msg)
+        else:
+            stat.summary(diagnostic_msgs.msg.DiagnosticStatus.OK, "Reading ptz data")
+        
+        stat.add("rate", self.rate)
+        stat.add("pan", self.current_ptz.pan)
+        stat.add("tilt", self.current_ptz.tilt)
+        stat.add("zoom", self.current_ptz.zoom)
+        
+        return stat
+
+
 class Axis():
     """
             Class Axis. Intended to read video from the IP camera and publish to ROS
@@ -489,7 +509,10 @@ class Axis():
         rospy.loginfo('Axis:rosSetup: Camera %s (%s:%d): url = %s, PTZ %s' %
                       (self.camera_model, self.hostname, self.camera_number, self.url, self.ptz))
 
-        self.encodedstring = base64.encodestring(self.username + ":" + str(self.password))[:-1]
+        try:
+            self.encodedstring = base64.encodestring(self.username + ":" + str(self.password))[:-1]
+        except:
+            self.encodedstring = base64.encodebytes((self.username + ":" + str(self.password)).encode())[:-1]
         self.auth = "Basic %s" % self.encodedstring
 
         # Diagnostic Updater
@@ -560,75 +583,117 @@ class Axis():
             rospy.loginfo('Axis:peer_unsubscribe: %s. Stop reading from camera' % (rospy.get_name()))
             self.run_camera = False
 
+    def authenticate(self):
+        # create a password manager
+        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+
+        # Add the username and password, use default realm.
+        top_level_url = "http://" + self.hostname
+        password_mgr.add_password(None, top_level_url, self.username,
+                                                            self.password)
+        handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+
+       # create "opener" (OpenerDirector instance)
+        opener = urllib.request.build_opener(handler)
+
+        # ...and install it globally so it can be used with urlopen.
+        urllib.request.install_opener(opener)
+
     def stream(self):
         """
                 Reads and process the streams from the camera
         """
         try:
             # If flag self.enable_auth is 'True' then use the user/password to access the camera. Otherwise use only self.url
-            if self.enable_auth:
-                req = urllib2.Request(self.url, None, {"Authorization": self.auth})
-            else:
-                req = urllib2.Request(self.url)
+            try:
+                if self.enable_auth:
+                    req = urllib2.Request(self.url, None, {"Authorization": self.auth})
+                else:
+                    req = urllib2.Request(self.url)
 
-            fp = urllib2.urlopen(req, timeout=self.timeout)
-            #fp = urllib2.urlopen(req)
+                fp = urllib2.urlopen(req, timeout=self.timeout)
+                #fp = urllib2.urlopen(req)
+                self.runCamera(fp)
+            except urllib2.URLError as e:
+                self.error_reading = True
+                self.error_reading_msg = e
+                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                            (self.camera_id, self.hostname, self.camera_number, e))
+            except urllib2.HTTPError as e:
+                self.error_reading = True
+                self.error_reading_msg = e
+                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                            (self.camera_id, self.hostname, self.camera_number, e))
+            except socket.timeout as e:
+                self.error_reading = True
+                self.error_reading_msg = e
+                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                            (self.camera_id, self.hostname, self.camera_number, e))
+        except:
+            try:
+                if self.enable_auth:
+                    self.authenticate()
+                fp = urllib.request.urlopen(self.url)
+                self.runCamera(fp)
+            except urllib.error.HTTPError as e:
+                self.error_reading = True
+                self.error_reading_msg = e
+                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                                (self.camera_id, self.hostname, self.camera_number, e))
+            except socket.timeout as e:
+                self.error_reading = True
+                self.error_reading_msg = e
+                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                                (self.camera_id, self.hostname, self.camera_number, e))
+            except urllib.error.URLError as e:
+                self.error_reading = True
+                self.error_reading_msg = e
+                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                                (self.camera_id, self.hostname, self.camera_number, e))
+    
+    def runCamera(self, fp):
+        while self.run_camera and not rospy.is_shutdown():
 
-            while self.run_camera and not rospy.is_shutdown():
+            boundary = fp.readline()
 
-                boundary = fp.readline()
+            header = {}
 
-                header = {}
-
-                while not rospy.is_shutdown():
+            while not rospy.is_shutdown():
+                try:
+                    line = fp.readline().decode()
+                except:
                     line = fp.readline()
-                    #print 'read line %s'%line
-                    if line == "\r\n":
-                        break
-                    line = line.strip()
-                    #print line
-                    parts = line.split(": ", 1)
-                    header[parts[0]] = parts[1]
+                #print('read line %s'%line)
+                if line == "\r\n":
+                    break
+                line = line.strip()
+                #print(line)
+                parts = line.split(": ", 1)
+                header[parts[0]] = parts[1]
 
-                content_length = int(header['Content-Length'])
-                #print 'Length = %d'%content_length
-                img = fp.read(content_length)
-                line = fp.readline()
+            content_length = int(header['Content-Length'])
+            #print('Length = %d'%content_length)
+            img = fp.read(content_length)
+            line = fp.readline()
 
-                msg = CompressedImage()
-                msg.header.stamp = rospy.Time.now()
-                msg.header.frame_id = self.axis_frame_id
-                msg.format = "jpeg"
-                msg.data = img
-                # publish image
-                self.compressed_image_publisher.publish(msg)
+            msg = CompressedImage()
+            msg.header.stamp = rospy.Time.now()
+            msg.header.frame_id = self.axis_frame_id
+            msg.format = "jpeg"
+            msg.data = img
+            # publish image
+            self.compressed_image_publisher.publish(msg)
 
-                cimsg = self.cinfo.getCameraInfo()
-                cimsg.header.stamp = msg.header.stamp
-                cimsg.header.frame_id = self.axis_frame_id
-                # publish camera info
-                self.caminfo_publisher.publish(cimsg)
+            cimsg = self.cinfo.getCameraInfo()
+            cimsg.header.stamp = msg.header.stamp
+            cimsg.header.frame_id = self.axis_frame_id
+            # publish camera info
+            self.caminfo_publisher.publish(cimsg)
 
-                #print self.real_fps
-                self.last_update = datetime.datetime.now()
-                self.error_reading = False
-                self.image_pub_freq.tick()
-
-        except urllib2.URLError, e:
-            self.error_reading = True
-            self.error_reading_msg = e
-            rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                         (self.camera_id, self.hostname, self.camera_number, e))
-        except urllib2.HTTPError, e:
-            self.error_reading = True
-            self.error_reading_msg = e
-            rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                         (self.camera_id, self.hostname, self.camera_number, e))
-        except socket.timeout, e:
-            self.error_reading = True
-            self.error_reading_msg = e
-            rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                         (self.camera_id, self.hostname, self.camera_number, e))
+            #print(self.real_fps)
+            self.last_update = datetime.datetime.now()
+            self.error_reading = False
+            self.image_pub_freq.tick()
 
     def publishDiagnostics(self, event):
         """
@@ -671,7 +736,7 @@ def main():
     axis_node_name = rospy.get_name()
     axis_node_namespace = rospy.get_namespace()
 
-    print 'namespace = %s, name = %s' % (axis_node_namespace, axis_node_name)
+    print('namespace = %s, name = %s' % (axis_node_namespace, axis_node_name))
 
     # default params
     arg_defaults = {

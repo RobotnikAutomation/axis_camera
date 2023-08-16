@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(axis_camera)
 
+if (POLICY CMP0048)
+  cmake_policy(SET CMP0048 NEW)
+endif (POLICY CMP0048)
+
 find_package(catkin REQUIRED COMPONENTS 
     message_generation
     std_msgs
