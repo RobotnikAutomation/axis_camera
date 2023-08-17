@@ -40,7 +40,6 @@ except:
 	import urllib.request, urllib.error, urllib.parse
 try:
     import httplib
-    import httplib2
 except:
     import http.client
 import socket
