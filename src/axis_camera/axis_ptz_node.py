@@ -32,8 +32,6 @@
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-import sys
-import time
 import threading
 try:
     import urllib
@@ -45,22 +43,12 @@ try:
     import httplib2
 except:
     import http.client
-import base64
-from PIL import Image
-import datetime
-import numpy as np
 import socket
 import math
 
-import rospkg
 import rospy
-import os
 
-
-from std_msgs.msg import String, Bool
 from std_srvs.srv import Empty
-from sensor_msgs.msg import CompressedImage, CameraInfo
-import camera_info_manager
 from sensor_msgs.msg import JointState
 
 from robotnik_msgs.msg import Axis as AxisMsg
