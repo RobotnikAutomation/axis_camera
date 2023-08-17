@@ -1,0 +1,6 @@
+<launch>
+    <arg name="ptz" default="true"/>
+    
+    <include if="$(arg ptz)" file="$(find axis_camera)/launch/axis_ptz.launch" />
+    <include file="$(find axis_camera)/launch/axis_stream.launch" />
+</launch>
