@@ -33,16 +33,6 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import threading
-try:
-    import urllib
-    import urllib2
-except:
-	import urllib.request, urllib.error, urllib.parse
-try:
-    import httplib
-except:
-    import http.client
-import socket
 import math
 
 import rospy
@@ -55,6 +45,7 @@ from robotnik_msgs.msg import ptz
 import diagnostic_updater
 import diagnostic_msgs
 
+from axis_camera.axis_lib.axis_control import ControlAxis
 
 class AxisPTZ(threading.Thread):
     """
@@ -62,10 +53,7 @@ class AxisPTZ(threading.Thread):
     """
 
     def __init__(self, args):
-        self.enable_auth = args['enable_auth']
         self.hostname = args['hostname']
-        self.username = args['username']
-        self.password = args['password']
         self.node_name = args['node_name']
         self.camera_id = args['camera_id']
         self.camera_model = args['camera_model']
@@ -88,7 +76,6 @@ class AxisPTZ(threading.Thread):
         self.use_control_timeout = args['use_control_timeout']
         self.control_timeout_value = args['control_timeout_value']
         self.invert_ptz = args['invert_ptz']
-        self.initialization_delay = args['initialization_delay']
         self.send_constantly = args['send_constantly']
 
         self.current_ptz = AxisMsg()
@@ -111,6 +98,8 @@ class AxisPTZ(threading.Thread):
         if(self.use_control_timeout):
             self.last_command_time = rospy.Time(0)
             self.command_timeout = rospy.Duration(self.control_timeout_value)
+        
+        self.controller = ControlAxis(self.hostname)
 
     def rosSetup(self):
         """
@@ -232,78 +221,28 @@ class AxisPTZ(threading.Thread):
         #pan = self.desired_pan
         #tilt = self.desired_tilt
         zoom = self.desired_zoom
-        try:
-            conn = httplib.HTTPConnection(self.hostname)
-        except:
-            conn = http.client.HTTPConnection(self.hostname)
-        params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
-        
-        try:		
-            #rospy.loginfo("AxisPTZ::cmd_ptz: pan = %f, tilt = %f, zoom = %f",pan, tilt, zoom)
-            try:
-                url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
-            except:
-                url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.parse.urlencode(params)
-
-            #rospy.loginfo("AxisPTZ::cmd_ptz: %s",url)
-            conn.request("GET", url)
-            if conn.getresponse().status != 204:
-                rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, url) )
-            #print("%s/axis-cgi/com/ptz.cgi?camera=1&%s. Response =%d" % (rospy.get_name(), urllib.urlencode(params), conn.getresponse().status))
-        except socket.error as e:
-            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
-        except socket.timeout as e:
-            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(),e))
+        control = self.controller.sendPTZCommand(pan, tilt, zoom)
+        if control['status'] != 204 and not control['exception']:
+            rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, control['url']) )
+        elif control['exception']:
+            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(), control['error_msg']))
             
-        
     def getPTZState(self):
         """
             Gets the current ptz state/position of the camera
         """
-        try:
-            conn = httplib.HTTPConnection(self.hostname)
-        except:
-            conn = http.client.HTTPConnection(self.hostname)
-
-        params = { 'query':'position' }
-        try:
-            try:
-                conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.urlencode(params))
-            except:
-                conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.parse.urlencode(params))
-            response = conn.getresponse()
-            if response.status == 200:
-                body = response.read()
-                try:
-                    params = dict([s.split('=',2) for s in body.splitlines()])
-                except:
-                    params = dict([s.decode().split('=',2) for s in body.splitlines()])
-                self.current_ptz.pan = math.radians(float(params['pan']))
-                self.current_ptz.tilt = math.radians(float(params['tilt']))
-                
-                if 'zoom' in params:
-                    self.current_ptz.zoom = float(params['zoom'])
-                else:
-                    self.current_ptz.zoom = 0.0
-                # Optional params (depending on model)
-                if 'iris' in params:
-                    self.current_ptz.iris = float(params['iris'])
-                else:
-                    self.current_ptz.iris = 0.0
-                if 'focus' in params:
-                    self.current_ptz.focus = float(params['focus'])
-                else:
-                    self.current_ptz.focus = 0.0
-                if 'autofocus' in params:
-                    self.current_ptz.autofocus = (params['autofocus'] == 'on')
-                else:
-                    self.current_ptz.autofocus = False
-                if 'autoiris' in params:
-                    self.current_ptz.autoiris = (params['autoiris'] == 'on')
-                else:
-                    self.current_ptz.autoiris = False
-            
             # First time saves the current values
+        ptz_read = self.controller.getPTZState()
+        if not ptz_read["error_reading"]:
+
+            self.current_ptz.pan = ptz_read["pan"]
+            self.current_ptz.tilt = ptz_read["tilt"]
+            self.current_ptz.zoom = ptz_read["zoom"]
+            self.current_ptz.iris = ptz_read["iris"]
+            self.current_ptz.autoiris = ptz_read["autoiris"]
+            self.current_ptz.focus = ptz_read["focus"]
+            self.current_ptz.autofocus = ptz_read["autofocus"]
+        
             if not self.ptz_syncronized:
                 self.desired_pan = self.current_ptz.pan 
                 self.desired_tilt = self.current_ptz.tilt
@@ -311,20 +250,13 @@ class AxisPTZ(threading.Thread):
                 #rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
                 self.ptz_syncronized = True
             
-            self.error_reading = False
-            
-        except socket.error as e:
-            rospy.logerr('%s:getPTZState: error connecting the camera: %s '%(rospy.get_name(),e))
-            self.error_reading = True
-            self.error_reading_msg = e
-        except socket.timeout as e:
-            rospy.logerr('%s:getPTZState: error connecting the camera: %s '%(rospy.get_name(),e))
-            self.error_reading = True
-            self.error_reading_msg = e
-        except ValueError as e:
-            rospy.logerr('%s:getPTZState: received corrupted data: %s '%(rospy.get_name(),e))
-            self.error_reading = True
-            self.error_reading_msg = e
+            self.error_reading = ptz_read["error_reading"]
+            self.error_reading_msg = ptz_read["error_reading_msg"]
+        
+        else:
+            self.error_reading = ptz_read["error_reading"]
+            self.error_reading_msg = ptz_read["error_reading_msg"]
+            rospy.logerr('%s:getPTZState: received corrupted data: %s '%(rospy.get_name(),self.error_reading_msg))
             
         #print('Get state')
         #self.axis.pub.publish(self.msg)
@@ -459,12 +391,9 @@ def main():
     # default params
     arg_defaults = {
         'hostname': '192.168.1.205',
-        'password': 'R0b0tn1K',
-        'username': 'root',
         'node_name': 'axis_camera',
         'camera_id': 'XXXX',  # internal id (if necessary)
         'camera_model': 'axis_m5525',
-        'enable_auth': True,
         'autoflip': False,
         'eflip': False,
         'pan_joint': 'pan',
@@ -484,7 +413,6 @@ def main():
         'use_control_timeout': False,
         'control_timeout_value': 5.0,
         'invert_ptz': False,
-        'initialization_delay': 0.0,  # time waiting before running
         'send_constantly': True
     }
     args = {}

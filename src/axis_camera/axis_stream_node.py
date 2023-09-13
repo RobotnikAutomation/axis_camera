@@ -33,14 +33,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import time
-try:
-    import urllib
-    import urllib2
-except:
-	import urllib.request, urllib.error, urllib.parse
-import base64
 import datetime
-import socket
 
 import rospy
 
@@ -49,6 +42,7 @@ import camera_info_manager
 
 import diagnostic_updater
 import diagnostic_msgs
+from axis_camera.axis_lib.axis_stream import StreamAxis
 
 
 class Axis():
@@ -76,25 +70,33 @@ class Axis():
         self.profile = args['profile']
         self.initialization_delay = args['initialization_delay']
 
+        args_streamer = {
+            'enable_auth' : self.enable_auth,
+            'hostname' : self.hostname,
+            'username' : self.username,
+            'password' : self.password,
+            'camera_number' : self.camera_number,
+            'fps' : self.fps,
+            'compression' : self.compression,
+            'profile' : self.profile
+        }
+
         # by default is stopped
         self.run_camera = False
 
-        self.videocodec = 'mpeg4'  # h264, mpeg4
-
-        self.timeout = 5  # seconds
         self.last_update = datetime.datetime.now()  # To control the data reception
 
         self.status = 'ERROR'
 
         # time between reconnections
         self.reconnection_time = 5
-        # timeout when calling urlopen
-        self.timeout = 5
 
         self.subscribers = 0
 
         self.error_reading = False
         self.error_reading_msg = ''
+
+        self.streamer = StreamAxis(args_streamer)
 
     def rosSetup(self):
         """
@@ -110,17 +112,10 @@ class Axis():
             "%scamera_info" % rospy.get_namespace(), CameraInfo, self, queue_size=10)
 
         # Sets the url
-        self.url = 'http://%s/axis-cgi/mjpg/video.cgi?streamprofile=%s&camera=%d&fps=%d&compression=%d' % (
-            self.hostname, self.profile, self.camera_number, self.fps, self.compression)
+        self.url = self.streamer.getUrl()
 
         rospy.loginfo('Axis:rosSetup: Camera %s (%s:%d): url = %s' %
                       (self.camera_model, self.hostname, self.camera_number, self.url))
-
-        try:
-            self.encodedstring = base64.encodestring(self.username + ":" + str(self.password))[:-1]
-        except:
-            self.encodedstring = base64.encodebytes((self.username + ":" + str(self.password)).encode())[:-1]
-        self.auth = "Basic %s" % self.encodedstring
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -181,98 +176,22 @@ class Axis():
             rospy.loginfo('Axis:peer_unsubscribe: %s. Stop reading from camera' % (rospy.get_name()))
             self.run_camera = False
 
-    def authenticate(self):
-        # create a password manager
-        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-
-        # Add the username and password, use default realm.
-        top_level_url = "http://" + self.hostname
-        password_mgr.add_password(None, top_level_url, self.username,
-                                                            self.password)
-        handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
-
-       # create "opener" (OpenerDirector instance)
-        opener = urllib.request.build_opener(handler)
-
-        # ...and install it globally so it can be used with urlopen.
-        urllib.request.install_opener(opener)
-
     def stream(self):
         """
                 Reads and process the streams from the camera
         """
-        try:
-            # If flag self.enable_auth is 'True' then use the user/password to access the camera. Otherwise use only self.url
-            try:
-                if self.enable_auth:
-                    req = urllib2.Request(self.url, None, {"Authorization": self.auth})
-                else:
-                    req = urllib2.Request(self.url)
+        self.error_reading, self.error_reading_msg = self.streamer.stream()
 
-                fp = urllib2.urlopen(req, timeout=self.timeout)
-                #fp = urllib2.urlopen(req)
-                self.runCamera(fp)
-            except urllib2.URLError as e:
-                self.error_reading = True
-                self.error_reading_msg = e
-                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                            (self.camera_id, self.hostname, self.camera_number, e))
-            except urllib2.HTTPError as e:
-                self.error_reading = True
-                self.error_reading_msg = e
-                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                            (self.camera_id, self.hostname, self.camera_number, e))
-            except socket.timeout as e:
-                self.error_reading = True
-                self.error_reading_msg = e
-                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                            (self.camera_id, self.hostname, self.camera_number, e))
-        except:
-            try:
-                if self.enable_auth:
-                    self.authenticate()
-                fp = urllib.request.urlopen(self.url)
-                self.runCamera(fp)
-            except urllib.error.HTTPError as e:
-                self.error_reading = True
-                self.error_reading_msg = e
-                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                                (self.camera_id, self.hostname, self.camera_number, e))
-            except socket.timeout as e:
-                self.error_reading = True
-                self.error_reading_msg = e
-                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                                (self.camera_id, self.hostname, self.camera_number, e))
-            except urllib.error.URLError as e:
-                self.error_reading = True
-                self.error_reading_msg = e
-                rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
-                                (self.camera_id, self.hostname, self.camera_number, e))
+        if self.error_reading:
+            rospy.logerr('Axis:stream: Camera %s (%s:%d). Error: %s' %
+                                    (self.camera_id, self.hostname, self.camera_number, self.error_reading_msg))
+        else:
+            self.runCamera()
     
-    def runCamera(self, fp):
+    def runCamera(self):
         while self.run_camera and not rospy.is_shutdown():
 
-            boundary = fp.readline()
-
-            header = {}
-
-            while not rospy.is_shutdown():
-                try:
-                    line = fp.readline().decode()
-                except:
-                    line = fp.readline()
-                #print('read line %s'%line)
-                if line == "\r\n":
-                    break
-                line = line.strip()
-                #print(line)
-                parts = line.split(": ", 1)
-                header[parts[0]] = parts[1]
-
-            content_length = int(header['Content-Length'])
-            #print('Length = %d'%content_length)
-            img = fp.read(content_length)
-            line = fp.readline()
+            img = self.streamer.getImage(rospy.is_shutdown())
 
             msg = CompressedImage()
             msg.header.stamp = rospy.Time.now()
