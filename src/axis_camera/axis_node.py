@@ -242,6 +242,11 @@ class AxisPTZ(threading.Thread):
         """
                 Gets the current ptz state/position of the camera
         """
+        if self.invert_ptz:
+            invert_command = -1.0
+        else:
+            invert_command = 1.0
+            
         conn = httplib.HTTPConnection(self.hostname)
 
         params = {'query': 'position'}
@@ -251,8 +256,8 @@ class AxisPTZ(threading.Thread):
             if response.status == 200:
                 body = response.read()
                 params = dict([s.split('=', 2) for s in body.splitlines()])
-                self.current_ptz.pan = math.radians(float(params['pan']))
-                self.current_ptz.tilt = math.radians(float(params['tilt']))
+                self.current_ptz.pan = invert_command * math.radians(float(params['pan']))
+                self.current_ptz.tilt = invert_command * math.radians(float(params['tilt']))
 
                 if params.has_key('zoom'):
                     self.current_ptz.zoom = float(params['zoom'])
