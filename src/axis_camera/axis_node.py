@@ -270,6 +270,11 @@ class AxisPTZ(threading.Thread):
         except:
             conn = http.client.HTTPConnection(self.hostname)
 
+        if self.invert_ptz:
+            invert_command = -1.0
+        else:
+            invert_command = 1.0
+            
         params = { 'query':'position' }
         try:
             try:
@@ -283,8 +288,8 @@ class AxisPTZ(threading.Thread):
                     params = dict([s.split('=',2) for s in body.splitlines()])
                 except:
                     params = dict([s.decode().split('=',2) for s in body.splitlines()])
-                self.current_ptz.pan = math.radians(float(params['pan']))
-                self.current_ptz.tilt = math.radians(float(params['tilt']))
+                self.current_ptz.pan = invert_command * math.radians(float(params['pan']))
+                self.current_ptz.tilt = invert_command * math.radians(float(params['tilt']))
                 
                 if 'zoom' in params:
                     self.current_ptz.zoom = float(params['zoom'])
