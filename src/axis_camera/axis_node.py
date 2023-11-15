@@ -85,6 +85,7 @@ class AxisPTZ(threading.Thread):
         self.eflip = args['eflip']
         self.tilt_joint = args['tilt_joint']
         self.pan_joint = args['pan_joint']
+        self.zoom_joint = args['zoom_joint']
         self.min_pan_value = args['min_pan_value']
         self.max_pan_value = args['max_pan_value']
         self.min_tilt_value = args['min_tilt_value']
@@ -371,12 +372,12 @@ class AxisPTZ(threading.Thread):
         # Publish the joint state
         msg = JointState()
         msg.header.stamp = rospy.Time.now()
-        
-        msg.name = [self.pan_joint, self.tilt_joint]
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt]
-        msg.velocity = [0.0, 0.0]
-        msg.effort = [0.0, 0.0]
-        
+
+        msg.name = [self.pan_joint, self.tilt_joint, self.zoom_joint]
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, self.current_ptz.zoom]
+        msg.velocity = [0.0, 0.0, 0.0]
+        msg.effort = [0.0, 0.0, 0.0]
+
         self.joint_state_publisher.publish(msg)
         
         
@@ -761,6 +762,7 @@ def main():
         'eflip': False,
         'pan_joint': 'pan',
         'tilt_joint': 'tilt',
+        'zoom_joint': 'zoom',
         'min_pan_value': -2.97,
         'max_pan_value': 2.97,
         'min_tilt_value': 0,
