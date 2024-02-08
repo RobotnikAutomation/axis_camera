@@ -1,6 +1,30 @@
 <launch>
     <arg name="ptz" default="true"/>
+    <arg name="camera_model" default="axis_m5525"/>
+    <arg name="prefix" default=""/>
+	<arg name="node_name" default="axis_camera"/>
+	<arg name="ip_address" default="192.168.0.185"/>
+	<arg name="username" default="root"/>
+	<arg name="password" default="R0b0tn1K"/>
+	<arg name="enable_auth" default="false"/> 
     
-    <include if="$(arg ptz)" file="$(find axis_camera)/launch/axis_ptz.launch" />
-    <include file="$(find axis_camera)/launch/axis_stream.launch" />
+    <include if="$(arg ptz)" file="$(find axis_camera)/launch/axis_ptz.launch">
+        <arg name="camera_model" value="$(arg camera_model)" />
+        <arg name="prefix" value="$(arg prefix)" />
+        <arg name="node_name" value="$(arg node_name)" />
+        <arg name="ip_address" value="$(arg ip_address)" />
+        <arg name="username" value="$(arg username)" />
+        <arg name="password" value="$(arg password)" />
+        <arg name="enable_auth" value="$(arg enable_auth)" />
+    </include>
+
+    <include file="$(find axis_camera)/launch/axis_stream.launch" >
+        <arg name="camera_model" value="$(arg camera_model)" />
+        <arg name="prefix" value="$(arg prefix)" />
+        <arg name="node_name" value="$(arg node_name)" />
+        <arg name="ip_address" value="$(arg ip_address)" />
+        <arg name="username" value="$(arg username)" />
+        <arg name="password" value="$(arg password)" />
+        <arg name="enable_auth" value="$(arg enable_auth)" />
+    </include>
 </launch>
