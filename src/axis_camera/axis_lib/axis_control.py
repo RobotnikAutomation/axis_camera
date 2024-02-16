@@ -1,11 +1,13 @@
 try:
-    import urllib
+    import urllib.parse as urllib_parse
 except:
-	import urllib.request, urllib.error, urllib.parse
+	import urllib as urllib_parse #Not tested in pyhton2
+
 try:
     import httplib
 except:
-    import http.client
+    import http.client as httplib
+
 import socket
 import math
 
@@ -19,17 +21,12 @@ class ControlAxis():
             'error_msg': '',
             'status': 0
         }
-        try:
-            conn = httplib.HTTPConnection(self.hostname)
-        except:
-            conn = http.client.HTTPConnection(self.hostname)
+
+        conn = httplib.HTTPConnection(self.hostname)
         params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
         
-        try:		
-            try:
-                url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.urlencode(params)
-            except:
-                url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib.parse.urlencode(params)
+        try:		   
+            url = "/axis-cgi/com/ptz.cgi?camera=1&%s" % urllib_parse.urlencode(params)
 
             conn.request("GET", url)
             ret['status'] = conn.getresponse().status
@@ -48,17 +45,10 @@ class ControlAxis():
             Gets the current ptz state/position of the camera
         """
         ptz_read = {}
-        try:
-            conn = httplib.HTTPConnection(self.hostname)
-        except:
-            conn = http.client.HTTPConnection(self.hostname)
-
+        conn = httplib.HTTPConnection(self.hostname)
         params = { 'query':'position' }
         try:
-            try:
-                conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.urlencode(params))
-            except:
-                conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib.parse.urlencode(params))
+            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(params))
             response = conn.getresponse()
             if response.status == 200:
                 body = response.read()

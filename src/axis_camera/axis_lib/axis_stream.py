@@ -1,8 +1,9 @@
 try:
-    import urllib
-    import urllib2
+    import urllib2 as urllib_request #Not tested in pyhton2
+    import urllib2 as urllib_error
 except:
-	import urllib.request, urllib.error, urllib.parse
+    import urllib.request as urllib_request
+    import urllib.error as urllib_error
 import base64
 import socket
 
@@ -35,19 +36,19 @@ class StreamAxis():
 
     def authenticate(self):
         # create a password manager
-        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+        password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
 
         # Add the username and password, use default realm.
         top_level_url = "http://" + self.hostname
         password_mgr.add_password(None, top_level_url, self.username,
                                                             self.password)
-        handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+        handler = urllib_request.HTTPBasicAuthHandler(password_mgr)
 
        # create "opener" (OpenerDirector instance)
-        opener = urllib.request.build_opener(handler)
+        opener = urllib_request.build_opener(handler)
 
         # ...and install it globally so it can be used with urlopen.
-        urllib.request.install_opener(opener)
+        urllib_request.install_opener(opener)
 
     def stream(self): #Change msgs
         """
@@ -59,56 +60,49 @@ class StreamAxis():
             # If flag self.enable_auth is 'True' then use the user/password to access the camera. Otherwise use only self.url
             try:
                 if self.enable_auth:
-                    req = urllib2.Request(self._url, None, {"Authorization": self.auth})
+                    req = urllib_request.Request(self._url, None, {"Authorization": self.auth})
                 else:
-                    req = urllib2.Request(self._url)
-                self.fp = urllib2.urlopen(req, timeout=self.timeout)
-
-            except urllib2.URLError as e:
-                error_reading = True
-                error_reading_msg = e
-            except urllib2.HTTPError as e:
-                error_reading = True
-                error_reading_msg = e
-            except socket.timeout as e:
-                error_reading = True
-                error_reading_msg = e
-
-        except:
-            try:
+                    req = urllib_request.Request(self._url)
+                self.fp = urllib_request.urlopen(req, timeout=self.timeout)
+            
+            except:
+                req = urllib_request.Request(self._url)
                 if self.enable_auth:
                     self.authenticate()
-                self.fp = urllib.request.urlopen(self._url)
-                
-            except urllib.error.HTTPError as e:
-                error_reading = True
-                error_reading_msg = e
-            except socket.timeout as e:
-                error_reading = True
-                error_reading_msg = e
-            except urllib.error.URLError as e:
-                error_reading = True
-                error_reading_msg = e
+                self.fp = urllib_request.urlopen(req)
+
+        except urllib_error.URLError as e:
+            error_reading = True
+            error_reading_msg = e
+        except urllib_error.HTTPError as e:
+            error_reading = True
+            error_reading_msg = e
+        except socket.timeout as e:
+            error_reading = True
+            error_reading_msg = e
 
         return error_reading, error_reading_msg
 
-    def getImage(self, rospy_shutdown):
-        boundary = self.fp.readline()
+    def getImage(self):
+        boundary = self.readLine()
+        line = self.readLine()
         header = {}
-        while not rospy_shutdown:
-            try:
-                line = self.fp.readline().decode()
-            except:
-                line = self.fp.readline()
+        while not line == "\r\n":
             # print('read line %s'%line)
-            if line == "\r\n":
-                break
             line = line.strip()
             parts = line.split(": ", 1)
             header[parts[0]] = parts[1]
+            line = self.readLine()
 
         content_length = int(header['Content-Length'])
         #print('Length = %d'%content_length)
         img = self.fp.read(content_length)
-        line = self.fp.readline()
+        line = self.readLine()
         return img
+
+    def readLine(self):
+        try:
+            line = self.fp.readline().decode()
+        except:
+            line = self.fp.readline()
+        return line

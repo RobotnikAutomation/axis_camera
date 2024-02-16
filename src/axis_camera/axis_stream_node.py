@@ -191,7 +191,7 @@ class Axis():
     def runCamera(self):
         while self.run_camera and not rospy.is_shutdown():
 
-            img = self.streamer.getImage(rospy.is_shutdown())
+            img = self.streamer.getImage()
 
             msg = CompressedImage()
             msg.header.stamp = rospy.Time.now()
