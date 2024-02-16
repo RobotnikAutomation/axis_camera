@@ -6,6 +6,8 @@ eflip: false
 #
 pan_joint: front_ptz_camera_pan_joint
 tilt_joint: front_ptz_camera_tilt_joint
+zoom_joint: front_ptz_camera_zoom_joint
+
 # radians
 min_pan_value: -2.97
 max_pan_value: 2.97

@@ -13,20 +13,21 @@
 
 	<arg name="pan_joint" default="$(arg prefix)$(arg node_name)_pan_joint"/>
 	<arg name="tilt_joint" default="$(arg prefix)$(arg node_name)_tilt_joint"/>
+	<arg name="zoom_joint" default="$(arg prefix)$(arg node_name)_zoom_joint"/>
 	<arg name="initialization_delay" default="0.0"/>
-	<arg name="send_constantly" default="true"/>
+	<arg name="send_constantly" default="false"/>
 
+	<rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
 	<param name="hostname" value="$(arg ip_address)"/>
 -	<param name="username" value="$(arg username)" />
 -	<param name="password" value="$(arg password)" />
-	<param name="node_name" value="$(arg node_name)"/>
 -	<param name="camera_model" value="$(arg camera_model)"/>
 	<param name="enable_auth" value="$(arg enable_auth)"/>
 	<param name="pan_joint" value="$(arg pan_joint)"/>
 	<param name="tilt_joint" value="$(arg tilt_joint)"/>
+	<param name="zoom_joint" value="$(arg zoom_joint)"/>
 	<param name="initialization_delay" value="$(arg initialization_delay)"/>
 	<param name="send_constantly" value="$(arg send_constantly)"/>
 
-	<rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
 	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)_ptz" output="screen"/>
 </launch>
