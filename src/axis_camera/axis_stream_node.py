@@ -59,7 +59,6 @@ class Axis():
         self.hostname = args['hostname']
         self.username = 'root'
         self.password = args['password']
-        self.node_name = args['node_name']
         self.camera_id = args['camera_id']
         self.camera_number = args['camera_number']
         self.camera_info_url = args['camera_info_url']
@@ -102,8 +101,9 @@ class Axis():
         """
                 Creates and setups ROS components
         """
+        axis_node_name = rospy.get_name()
         self.cinfo = camera_info_manager.CameraInfoManager(
-            cname=self.camera_model, url=self.camera_info_url, namespace=rospy.get_namespace()+self.node_name)
+            cname=self.camera_model, url=self.camera_info_url, namespace=rospy.get_namespace()+axis_node_name)
         self.cinfo.loadCameraInfo()
         # Mirar de cambiar por ImageTransport
         self.compressed_image_publisher = rospy.Publisher(
@@ -258,7 +258,6 @@ def main():
         'hostname': '192.168.1.205',
         'password': 'R0b0tn1K',
         'username': 'root',
-        'node_name': 'axis_camera',
         'enable_auth': True,
         'camera_number': 1,  # camera number
         'camera_id': 'XXXX',  # internal id (if necessary)
