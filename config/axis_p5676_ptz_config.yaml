@@ -17,3 +17,4 @@ min_zoom_value: 0
 max_zoom_value: 9999
 # Flag to invert received/sent pan and tilt values
 invert_ptz: false
+ptz_rate: 10
