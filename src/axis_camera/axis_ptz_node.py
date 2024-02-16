@@ -54,7 +54,6 @@ class AxisPTZ(threading.Thread):
 
     def __init__(self, args):
         self.hostname = args['hostname']
-        self.node_name = args['node_name']
         self.camera_id = args['camera_id']
         self.camera_model = args['camera_model']
         self.rate = args['ptz_rate']
@@ -62,6 +61,7 @@ class AxisPTZ(threading.Thread):
         self.eflip = args['eflip']
         self.tilt_joint = args['tilt_joint']
         self.pan_joint = args['pan_joint']
+        self.zoom_joint = args['zoom_joint']
         self.min_pan_value = args['min_pan_value']
         self.max_pan_value = args['max_pan_value']
         self.min_tilt_value = args['min_tilt_value']
@@ -106,14 +106,14 @@ class AxisPTZ(threading.Thread):
                 Sets the ros connections
         """
         ns = rospy.get_namespace()
-        self.pub = rospy.Publisher("%s%s/camera_params" % (ns, self.node_name), AxisMsg, queue_size=10)
+        self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
         #self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
-        self.sub = rospy.Subscriber("%s%s/ptz_command" % (ns, self.node_name), ptz, self.commandPTZCb)
+        self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
 
         # Services
-        self.home_service = rospy.Service('%s%s/home_ptz' % (ns, self.node_name), Empty, self.homeService)
+        self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -144,9 +144,11 @@ class AxisPTZ(threading.Thread):
         # Need to convert from rad to degree
         # relative motion
         if command.relative:
-            new_pan = invert_command*command.pan + self.desired_pan
-            new_tilt = invert_command*command.tilt + self.desired_tilt
-            new_zoom = self.desired_zoom + command.zoom
+            self.getPTZState()
+
+            new_pan = invert_command*command.pan + self.current_ptz.pan
+            new_tilt = invert_command*command.tilt + self.current_ptz.tilt
+            new_zoom = self.current_ptz.zoom + command.zoom
 
         else:
             new_pan = invert_command*command.pan
@@ -299,10 +301,10 @@ class AxisPTZ(threading.Thread):
         msg = JointState()
         msg.header.stamp = rospy.Time.now()
         
-        msg.name = [self.pan_joint, self.tilt_joint]
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt]
-        msg.velocity = [0.0, 0.0]
-        msg.effort = [0.0, 0.0]
+        msg.name = [self.pan_joint, self.tilt_joint, self.zoom_joint]
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, self.current_ptz.zoom]
+        msg.velocity = [0.0, 0.0, 0.0]
+        msg.effort = [0.0, 0.0, 0.0]
         
         self.joint_state_publisher.publish(msg)
         
@@ -391,13 +393,13 @@ def main():
     # default params
     arg_defaults = {
         'hostname': '192.168.1.205',
-        'node_name': 'axis_camera',
         'camera_id': 'XXXX',  # internal id (if necessary)
         'camera_model': 'axis_m5525',
         'autoflip': False,
         'eflip': False,
         'pan_joint': 'pan',
         'tilt_joint': 'tilt',
+        'zoom_joint': 'zoom',
         'min_pan_value': -2.97,
         'max_pan_value': 2.97,
         'min_tilt_value': 0,
