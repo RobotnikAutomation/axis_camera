@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(axis_camera)
 
+if (POLICY CMP0048)
+  cmake_policy(SET CMP0048 NEW)
+endif (POLICY CMP0048)
+
 find_package(catkin REQUIRED COMPONENTS 
     message_generation
     std_msgs
@@ -44,6 +48,12 @@ catkin_package(
 catkin_install_python(PROGRAMS src/axis_camera/__init__.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
+catkin_install_python(PROGRAMS src/axis_camera/axis_ptz_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+  
+catkin_install_python(PROGRAMS src/axis_camera/axis_stream_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+  
 catkin_install_python(PROGRAMS src/axis_camera/axis_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 

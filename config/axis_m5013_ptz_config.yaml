@@ -6,6 +6,7 @@ eflip: false
 #
 pan_joint: joint_camera_pan
 tilt_joint: joint_camera_tilt
+zoom_joint: joint_camera_zoom
 # radians
 min_pan_value: -2.97
 max_pan_value: 2.97

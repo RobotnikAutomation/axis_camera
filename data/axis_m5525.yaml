@@ -1,6 +1,6 @@
 !!python/unicode 'camera_matrix':
   !!python/unicode 'data': !!python/tuple [1151.6254660665138, 0.0, 637.1644839822062, 0.0, 1155.1351299342982, 290.8454319590401, 0.0, 0.0, 1.0]
-!!python/unicode 'camera_name': axis_m5013
+!!python/unicode 'camera_name': axis_m5525
 !!python/unicode 'distortion_coefficients':
   !!python/unicode 'data': !!python/tuple [-0.15287021194081643, 0.2163090882648915, -0.013751587560037581, -0.002851528904407255, 0.0]
 !!python/unicode 'distortion_model': plumb_bob
