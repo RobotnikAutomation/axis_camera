@@ -78,6 +78,10 @@ class AxisPTZ(threading.Thread):
         self.invert_ptz = args['invert_ptz']
         self.send_constantly = args['send_constantly']
 
+        # Offset values to the center of the camera if it is not mounted center.
+        self.pan_offset = args['pan_offset']    # Offset in radians with sign, positive to the right
+        self.tilt_offset = args['tilt_offset']  # Offset in radians and sign, positive to the down
+
         self.current_ptz = AxisMsg()
         self.last_msg = ptz()
         threading.Thread.__init__(self)
@@ -156,15 +160,18 @@ class AxisPTZ(threading.Thread):
             # new_pan = math.degrees(invert_command*command.pan)
             # new_tilt = math.degrees(invert_command*command.tilt)
             new_zoom = command.zoom
+        
         # Applies limit restrictions
         if new_pan > self.max_pan_value:
             new_pan = self.max_pan_value
         elif new_pan < self.min_pan_value:
             new_pan = self.min_pan_value
+        
         if new_tilt > self.max_tilt_value:
             new_tilt = self.max_tilt_value
         elif new_tilt < self.min_tilt_value:
             new_tilt = self.min_tilt_value
+        
         if new_zoom > self.max_zoom_value:
             new_zoom = self.max_zoom_value
         elif new_zoom < self.min_zoom_value:
@@ -218,12 +225,18 @@ class AxisPTZ(threading.Thread):
         """
             Sends the ptz to the camera
         """
+        # Add offsets to the pan and tilt values
+        pan = self.desired_pan + self.pan_offset
+        tilt = self.desired_tilt + self.tilt_offset
+
         pan = math.degrees(self.desired_pan)
         tilt = math.degrees(self.desired_tilt)
         #pan = self.desired_pan
         #tilt = self.desired_tilt
         zoom = self.desired_zoom
+        
         control = self.controller.sendPTZCommand(pan, tilt, zoom)
+        
         if control['status'] != 204 and not control['exception']:
             rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, control['url']) )
         elif control['exception']:
@@ -237,8 +250,8 @@ class AxisPTZ(threading.Thread):
         ptz_read = self.controller.getPTZState()
         if not ptz_read["error_reading"]:
 
-            self.current_ptz.pan = ptz_read["pan"]
-            self.current_ptz.tilt = ptz_read["tilt"]
+            self.current_ptz.pan = ptz_read["pan"] - self.pan_offset
+            self.current_ptz.tilt = ptz_read["tilt"] - self.tilt_offset
             self.current_ptz.zoom = ptz_read["zoom"]
             self.current_ptz.iris = ptz_read["iris"]
             self.current_ptz.autoiris = ptz_read["autoiris"]
@@ -415,7 +428,9 @@ def main():
         'use_control_timeout': False,
         'control_timeout_value': 5.0,
         'invert_ptz': False,
-        'send_constantly': True
+        'send_constantly': True,
+        'pan_offset': 0.0,
+        'tilt_offset': 0.0
     }
     args = {}
 
