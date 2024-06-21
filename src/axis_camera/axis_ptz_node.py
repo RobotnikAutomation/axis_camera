@@ -68,14 +68,19 @@ class AxisPTZ(threading.Thread):
         self.max_tilt_value = args['max_tilt_value']
         self.min_zoom_value = args['min_zoom_value']
         self.max_zoom_value = args['max_zoom_value']
-        self.home_pan_value = args['home_pan_value']
-        self.home_tilt_value = args['home_tilt_value']
         self.error_pos = args['error_pos']
         self.error_zoom = args['error_zoom']
         self.joint_states_topic = args['joint_states_topic']
         self.use_control_timeout = args['use_control_timeout']
         self.control_timeout_value = args['control_timeout_value']
-        self.invert_ptz = args['invert_ptz']
+        if args['invert_pan'] == True:
+            self.invert_pan = -1.0
+        else:
+            self.invert_pan = 1.0
+        if args['invert_tilt'] == True:
+            self.invert_tilt = -1.0
+        else:
+            self.invert_tilt = 1.0
         self.send_constantly = args['send_constantly']
 
         # Offset values to the center of the camera if it is not mounted center.
@@ -141,24 +146,19 @@ class AxisPTZ(threading.Thread):
         if(self.use_control_timeout):
             self.last_command_time = rospy.get_rostime()
             #rospy.loginfo("Last command time %i %i", self.last_command_time.secs, self.last_command_time.nsecs)
-        if self.invert_ptz:
-            invert_command = -1.0
-        else:
-            invert_command = 1.0
         # Need to convert from rad to degree
         # relative motion
         if command.relative:
             self.getPTZState()
 
-            new_pan = invert_command*command.pan + self.current_ptz.pan
-            new_tilt = invert_command*command.tilt + self.current_ptz.tilt
+            new_pan = self.invert_pan*command.pan + self.current_ptz.pan
+            new_tilt = self.invert_tilt*command.tilt + self.current_ptz.tilt
             new_zoom = self.current_ptz.zoom + command.zoom
 
         else:
-            new_pan = invert_command*command.pan
-            new_tilt = invert_command*command.tilt
-            # new_pan = math.degrees(invert_command*command.pan)
-            # new_tilt = math.degrees(invert_command*command.tilt)
+            new_pan = self.invert_pan*command.pan
+            new_tilt = self.invert_tilt*command.tilt
+            
             new_zoom = command.zoom
         
         # Applies limit restrictions
@@ -186,8 +186,8 @@ class AxisPTZ(threading.Thread):
         # Set home values
         home_command = ptz()
         home_command.relative = False
-        home_command.pan = self.home_pan_value
-        home_command.tilt = self.home_tilt_value
+        home_command.pan = 0.0
+        home_command.tilt = 0.0
         home_command.zoom = 0
         
         self.setCommandPTZ(home_command)
@@ -228,9 +228,15 @@ class AxisPTZ(threading.Thread):
         # Add offsets to the pan and tilt values
         pan = self.desired_pan + self.pan_offset
         tilt = self.desired_tilt + self.tilt_offset
+        
+        #rospy.loginfo('sendPTZCommand: desired_pan = %.3lf, pan_offset = %.3lf, pan = %.3lf', self.desired_pan, self.pan_offset, pan)
+        #rospy.loginfo('sendPTZCommand: desired_tilt = %.3lf, tilt_offset = %.3lf, tilt = %.3lf',self.desired_tilt, self.tilt_offset, tilt)
 
-        pan = math.degrees(self.desired_pan)
-        tilt = math.degrees(self.desired_tilt)
+        pan = math.degrees(pan)
+        tilt = math.degrees(tilt)
+
+        rospy.loginfo('pan_degrees= %.3lf, tilt_degrees = %.3lf', pan, tilt)
+
         #pan = self.desired_pan
         #tilt = self.desired_tilt
         zoom = self.desired_zoom
@@ -246,12 +252,14 @@ class AxisPTZ(threading.Thread):
         """
             Gets the current ptz state/position of the camera
         """
-            # First time saves the current values
+
+        # First time saves the current values
         ptz_read = self.controller.getPTZState()
         if not ptz_read["error_reading"]:
 
-            self.current_ptz.pan = ptz_read["pan"] - self.pan_offset
-            self.current_ptz.tilt = ptz_read["tilt"] - self.tilt_offset
+            self.current_ptz.pan =  self.invert_pan * self.normalize_angle( ptz_read["pan"] - self.pan_offset)
+            self.current_ptz.tilt = self.invert_tilt * (ptz_read["tilt"] - self.tilt_offset)
+            
             self.current_ptz.zoom = ptz_read["zoom"]
             self.current_ptz.iris = ptz_read["iris"]
             self.current_ptz.autoiris = ptz_read["autoiris"]
@@ -267,6 +275,8 @@ class AxisPTZ(threading.Thread):
             
             self.error_reading = ptz_read["error_reading"]
             self.error_reading_msg = ptz_read["error_reading_msg"]
+
+            #rospy.loginfo_throttle(5, 'getPTZState read pan = %.3lf, current_ptz.pan = %.3lf,  read tilt = %.3lf, current_ptz.tilt = %.3lf', ptz_read["pan"], self.current_ptz.pan, ptz_read["tilt"], self.current_ptz.tilt)
         
         else:
             self.error_reading = ptz_read["error_reading"]
@@ -276,7 +286,18 @@ class AxisPTZ(threading.Thread):
         #print('Get state')
         #self.axis.pub.publish(self.msg)
         
+    def normalize_angle(self, angle_in_radians) -> float:
+        """
+        Normalizes an angle in radians to be between -π and π.
+        """
+        normalized_angle = angle_in_radians
+        while normalized_angle > math.pi:
+            normalized_angle -= 2 * math.pi
+        while normalized_angle < -math.pi:
+            normalized_angle += 2 * math.pi
         
+        return normalized_angle
+       
     def run(self):
         """
             Executes the thread
@@ -419,15 +440,14 @@ def main():
         'max_tilt_value': 1.57,
         'max_zoom_value': 20000,
         'min_zoom_value': 0,
-        'home_pan_value': 0.0,
-        'home_tilt_value': 0.79,
         'ptz_rate': 5.0,
         'error_pos': 0.02,
         'error_zoom': 99.0,
         'joint_states_topic': 'joint_states',
         'use_control_timeout': False,
         'control_timeout_value': 5.0,
-        'invert_ptz': False,
+        'invert_pan': False,
+        'invert_tilt': False,
         'send_constantly': True,
         'pan_offset': 0.0,
         'tilt_offset': 0.0
