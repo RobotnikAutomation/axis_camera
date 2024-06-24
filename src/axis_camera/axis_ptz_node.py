@@ -109,6 +109,16 @@ class AxisPTZ(threading.Thread):
             self.command_timeout = rospy.Duration(self.control_timeout_value)
         
         self.controller = ControlAxis(self.hostname)
+        # Time to set when the last command was received
+        self.t_last_command_time = rospy.Time(0)
+        # Time to control when the last command was received
+        self.t_last_command_watchdog = rospy.Duration(1.0)
+
+        # position, velocity
+        self.default_control_mode = 'position'
+        self.control_mode = 'position'
+        self.t_last_command_sent = rospy.Time(0)
+        self.t_control_loop = 1 / self.rate
 
     def rosSetup(self):
         """
@@ -116,7 +126,6 @@ class AxisPTZ(threading.Thread):
         """
         ns = rospy.get_namespace()
         self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
-        #self.sub = rospy.Subscriber("cmd", Axis, self.cmd)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
@@ -135,10 +144,14 @@ class AxisPTZ(threading.Thread):
         """
             Command for ptz movements
         """
-        #print(msg)
-        self.setCommandPTZ(msg)
-        if not self.send_constantly:
-            self.sendPTZCommand()
+        self.t_last_command_time = rospy.Time.now()
+
+        if self.ptz_syncronized:
+            self.setCommandPTZ(msg)
+            if self.send_constantly == False:
+                self.sendPTZCommand()
+        else:
+            rospy.logwarn_throttle(1, '%s:commandPTZCb: PTZ not syncronized!', rospy.get_name())
 
         
     def setCommandPTZ(self, command):
@@ -146,41 +159,56 @@ class AxisPTZ(threading.Thread):
         if(self.use_control_timeout):
             self.last_command_time = rospy.get_rostime()
             #rospy.loginfo("Last command time %i %i", self.last_command_time.secs, self.last_command_time.nsecs)
+        new_control_mode = self.default_control_mode
+        # Check available control modes
+        if command.mode == 'position' or command.mode == 'velocity':
+            new_control_mode = command.mode
+        if new_control_mode != self.control_mode:
+            self.control_mode = new_control_mode
+        
         # Need to convert from rad to degree
         # relative motion
-        if command.relative:
-            self.getPTZState()
-
-            new_pan = self.invert_pan*command.pan + self.current_ptz.pan
-            new_tilt = self.invert_tilt*command.tilt + self.current_ptz.tilt
-            new_zoom = self.current_ptz.zoom + command.zoom
-
+        if command.relative:            
+            new_pan = self.invert_pan*command.pan + self.desired_pan
+            new_tilt = self.invert_tilt*command.tilt + self.desired_tilt
+            new_zoom = command.zoom + self.desired_zoom
+            #rospy.loginfo('setCommandPTZ: new zoom = %.3lf +  %.3lf  = %.3lf', command.zoom, self.desired_zoom,new_zoom)
         else:
             new_pan = self.invert_pan*command.pan
             new_tilt = self.invert_tilt*command.tilt
-            
             new_zoom = command.zoom
-        
-        # Applies limit restrictions
-        if new_pan > self.max_pan_value:
-            new_pan = self.max_pan_value
-        elif new_pan < self.min_pan_value:
-            new_pan = self.min_pan_value
-        
-        if new_tilt > self.max_tilt_value:
-            new_tilt = self.max_tilt_value
-        elif new_tilt < self.min_tilt_value:
-            new_tilt = self.min_tilt_value
-        
-        if new_zoom > self.max_zoom_value:
-            new_zoom = self.max_zoom_value
-        elif new_zoom < self.min_zoom_value:
-            new_zoom = self.min_zoom_value
+            
+            # Applies limit restrictions
+        new_pan, new_tilt, new_zoom = self.enforcePTZLimits(new_pan, new_tilt, new_zoom)            
             
         self.desired_pan = new_pan
         self.desired_tilt = new_tilt
         self.desired_zoom = new_zoom
+
+        #rospy.loginfo_throttle(1, 'setCommandPTZ: pan = %.3lf, tilt = %.3lf, zoom = %.3lf', self.desired_pan, self.desired_tilt, self.desired_zoom)
+
+
+    def enforcePTZLimits(self, pan, tilt, zoom):
+        """
+            Enforces the limits of the PTZ values
+        """
+        if pan > self.max_pan_value:
+            pan = self.max_pan_value
+        elif pan < self.min_pan_value:
+            pan = self.min_pan_value
         
+        if tilt > self.max_tilt_value:
+            tilt = self.max_tilt_value
+        elif tilt < self.min_tilt_value:
+            tilt = self.min_tilt_value
+        
+        if zoom > self.max_zoom_value:
+            zoom = self.max_zoom_value
+        elif zoom < self.min_zoom_value:
+            zoom = self.min_zoom_value
+            
+        return pan, tilt, zoom
+
     def homeService(self, req):
         
         # Set home values
@@ -189,11 +217,15 @@ class AxisPTZ(threading.Thread):
         home_command.pan = 0.0
         home_command.tilt = 0.0
         home_command.zoom = 0
+        home_command.mode = 'position'
         
-        self.setCommandPTZ(home_command)
-        if not self.send_constantly:
-            self.sendPTZCommand()
-        
+        if self.ptz_syncronized:
+            self.setCommandPTZ(home_command)
+            if self.send_constantly == False:
+                self.sendPTZCommand()
+        else:
+            rospy.logwarn('%s:homeService: PTZ not syncronized!', rospy.get_name())
+            
         return {}
         
         
@@ -201,12 +233,30 @@ class AxisPTZ(threading.Thread):
         """
             Performs the control of the camera ptz
         """
-        # Only if it's syncronized
-        if self.ptz_syncronized:
-            #if self.isPTZinPosition():
-            self.sendPTZCommand()
-            #else:
-            #rospy.logwarn('controlPTZ: not in  position')
+        t_now = rospy.Time.now()
+
+        if self.control_mode == 'position':
+            # Only if it's syncronized
+            if self.ptz_syncronized:
+                if self.send_constantly == True:
+                    self.sendPTZCommand()
+        
+        elif self.control_mode == 'velocity':# Nothing for now
+            '''if (t_now - self.t_last_command_sent) > self.t_control_loop:
+                rospy.loginfo('controlPTZ: sending velocity command')
+            ''' 
+            # Only if it's syncronized
+            if self.ptz_syncronized:
+                if self.send_constantly == True:
+                    self.sendPTZCommand()
+
+        if (t_now - self.t_last_command_time) > self.t_last_command_watchdog:
+            #rospy.loginfo_throttle(5, 'controlPTZ: watchdog timeout')
+            # syncronize desired position to the current one every time the control is idle
+            self.desired_pan = self.invert_pan*self.current_ptz.pan 
+            self.desired_tilt = self.invert_tilt*self.current_ptz.tilt
+            self.desired_zoom = self.current_ptz.zoom
+
         
 
     def isPTZinPosition(self):	
@@ -221,32 +271,42 @@ class AxisPTZ(threading.Thread):
         else:
             return False
 
-    def sendPTZCommand(self):
+    def sendPTZCommand(self, pan = None, tilt = None, zoom = None):
         """
             Sends the ptz to the camera
         """
+
         # Add offsets to the pan and tilt values
-        pan = self.desired_pan + self.pan_offset
-        tilt = self.desired_tilt + self.tilt_offset
+        if pan is None:
+            pan_value = self.desired_pan + self.pan_offset
+        else:
+            pan_value = pan + self.pan_offset
+        
+        if tilt is None:
+            tilt_value = self.desired_tilt + self.tilt_offset
+        else:
+            tilt_value = tilt + self.tilt_offset
+        
+        if zoom is None:
+            zoom_value = self.desired_zoom
+        else:
+            zoom_value = zoom
         
         #rospy.loginfo('sendPTZCommand: desired_pan = %.3lf, pan_offset = %.3lf, pan = %.3lf', self.desired_pan, self.pan_offset, pan)
         #rospy.loginfo('sendPTZCommand: desired_tilt = %.3lf, tilt_offset = %.3lf, tilt = %.3lf',self.desired_tilt, self.tilt_offset, tilt)
 
-        pan = math.degrees(pan)
-        tilt = math.degrees(tilt)
-
-        rospy.loginfo('pan_degrees= %.3lf, tilt_degrees = %.3lf', pan, tilt)
-
-        #pan = self.desired_pan
-        #tilt = self.desired_tilt
-        zoom = self.desired_zoom
+        pan_value = math.degrees(pan_value)
+        tilt_value = math.degrees(tilt_value)
+        zoom_value = self.desired_zoom
         
-        control = self.controller.sendPTZCommand(pan, tilt, zoom)
+        control = self.controller.sendPTZCommand(pan_value, tilt_value, zoom_value)
         
         if control['status'] != 204 and not control['exception']:
             rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, control['url']) )
         elif control['exception']:
             rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(), control['error_msg']))
+        
+        self.t_last_command_sent = rospy.Time.now()
             
     def getPTZState(self):
         """
@@ -267,16 +327,16 @@ class AxisPTZ(threading.Thread):
             self.current_ptz.autofocus = ptz_read["autofocus"]
         
             if not self.ptz_syncronized:
-                self.desired_pan = self.current_ptz.pan 
-                self.desired_tilt = self.current_ptz.tilt
+                self.desired_pan = self.invert_pan*self.current_ptz.pan 
+                self.desired_tilt = self.invert_tilt*self.current_ptz.tilt
                 self.desired_zoom = self.current_ptz.zoom
-                #rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
+                rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
                 self.ptz_syncronized = True
             
             self.error_reading = ptz_read["error_reading"]
             self.error_reading_msg = ptz_read["error_reading_msg"]
 
-            #rospy.loginfo_throttle(5, 'getPTZState read pan = %.3lf, current_ptz.pan = %.3lf,  read tilt = %.3lf, current_ptz.tilt = %.3lf', ptz_read["pan"], self.current_ptz.pan, ptz_read["tilt"], self.current_ptz.tilt)
+            #rospy.loginfo_throttle(5, 'getPTZState read pan = %.3lf, current_ptz.pan = %.3lf,  read tilt = %.3lf, current_ptz.tilt = %.3lf, zoom = %.3lf', ptz_read["pan"], self.current_ptz.pan, ptz_read["tilt"], self.current_ptz.tilt, self.current_ptz.zoom)
         
         else:
             self.error_reading = ptz_read["error_reading"]
@@ -312,7 +372,7 @@ class AxisPTZ(threading.Thread):
                 self.manageControl()
             
             # Performs interaction with the camera if it is enabled
-            if self.run_control and self.send_constantly:
+            if self.run_control:
                 self.controlPTZ()
                 #print('Alive')
             # Publish ROS msgs
@@ -448,7 +508,7 @@ def main():
         'control_timeout_value': 5.0,
         'invert_pan': False,
         'invert_tilt': False,
-        'send_constantly': True,
+        'send_constantly': False,
         'pan_offset': 0.0,
         'tilt_offset': 0.0
     }
