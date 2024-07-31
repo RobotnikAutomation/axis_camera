@@ -4,9 +4,13 @@ autoflip: false
 # Internal configuration of the camera. It can automatically flip the image electronically 180 degrees, and continue to follow the person in the correct orientation, without delay.
 eflip: false
 #
-pan_joint: joint_camera_pan
-tilt_joint: joint_camera_tilt
-zoom_joint: joint_camera_zoom
+pan_joint: $(arg id_robot)_$(arg node_name)_pan_joint
+tilt_joint: $(arg id_robot)_$(arg node_name)_tilt_joint
+zoom_joint: $(arg id_robot)_$(arg node_name)_zoom_joint
+
+# offsets
+pan_offset: 0
+tilt_offset: 0
 # radians
 min_pan_value: -2.97
 max_pan_value: 2.97
