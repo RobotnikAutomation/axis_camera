@@ -8,7 +8,8 @@ endif (POLICY CMP0048)
 find_package(catkin REQUIRED COMPONENTS 
     message_generation
     std_msgs
-    sensor_msgs camera_info_manager_py
+    sensor_msgs
+    camera_info_manager_py
     geometry_msgs
     rospy
     tf
