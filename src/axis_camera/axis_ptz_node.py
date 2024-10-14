@@ -171,12 +171,12 @@ class AxisPTZ(threading.Thread):
         if command.relative:            
             new_pan = self.invert_pan*command.pan + self.desired_pan
             new_tilt = self.invert_tilt*command.tilt + self.desired_tilt
-            new_zoom = command.zoom + self.desired_zoom
+            new_zoom = (command.zoom / 30.0 ) * self.max_zoom_value + self.desired_zoom
             #rospy.loginfo('setCommandPTZ: new zoom = %.3lf +  %.3lf  = %.3lf', command.zoom, self.desired_zoom,new_zoom)
         else:
             new_pan = self.invert_pan*command.pan
             new_tilt = self.invert_tilt*command.tilt
-            new_zoom = command.zoom
+            new_zoom = (command.zoom / 30.0 ) * self.max_zoom_value
             
             # Applies limit restrictions
         new_pan, new_tilt, new_zoom = self.enforcePTZLimits(new_pan, new_tilt, new_zoom)            
