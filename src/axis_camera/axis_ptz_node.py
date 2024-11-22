@@ -42,6 +42,7 @@ from sensor_msgs.msg import JointState
 
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
+from robotnik_msgs.msg import CameraParameters
 import diagnostic_updater
 import diagnostic_msgs
 
@@ -70,6 +71,7 @@ class AxisPTZ(threading.Thread):
         self.max_zoom_value = args['max_zoom_value']
         self.min_zoom_augment = args['min_zoom_augment']
         self.max_zoom_augment = args['max_zoom_augment']
+        self.min_zoom_step = args['min_zoom_step']
         self.error_pos = args['error_pos']
         self.error_zoom = args['error_zoom']
         self.joint_states_topic = args['joint_states_topic']
@@ -131,7 +133,8 @@ class AxisPTZ(threading.Thread):
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
-
+        # Publish camera zoom info
+        self.zoom_parameter_pub = rospy.Publisher("~zoom_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
 
@@ -141,6 +144,10 @@ class AxisPTZ(threading.Thread):
         self.diagnostics_updater.add("Ptz state updater", self.getStateDiagnostic)
         # Creates a periodic callback to publish the diagnostics at desired freq
         self.diagnostics_timer = rospy.Timer(rospy.Duration(1.0), self.publishDiagnostics)
+
+        self.zoom_augments = []
+        for i in range(int(self.min_zoom_augment), int(self.max_zoom_augment) + 1, int(self.min_zoom_step)):
+            self.zoom_augments.append(i)
 
     def commandPTZCb(self, msg):
         """
@@ -400,6 +407,14 @@ class AxisPTZ(threading.Thread):
         """
             Publish to ROS server
         """
+        # Publish the zoom parameters
+        zoom_parameters = CameraParameters()
+        zoom_parameters.min_zoom_step = int(self.min_zoom_step)
+        zoom_parameters.zoom_lower_limit = int(self.min_zoom_augment)
+        zoom_parameters.zoom_upperlimit = int(self.max_zoom_augment)
+        zoom_parameters.zoom_augments = self.zoom_augments
+
+        self.zoom_parameter_pub.publish(zoom_parameters)
         # Publishes the current PTZ values
         self.pub.publish(self.current_ptz)
         
@@ -513,6 +528,7 @@ def main():
         'max_tilt_value': 1.57,
         'max_zoom_value': 20000,
         'min_zoom_value': 0,
+        'min_zoom_step': 1,
         'min_zoom_augment': 0.0,
         'max_zoom_augment': 30.0,
         'ptz_rate': 5.0,

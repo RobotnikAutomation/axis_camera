@@ -18,6 +18,7 @@ min_tilt_value: 0
 max_tilt_value: 1.57
 min_zoom_value: 1
 max_zoom_value: 9999
+min_zoom_step: 1
 min_zoom_augment: 0.0
 max_zoom_augment: 30.0
 # Flag to invert received/sent pan and tilt values
