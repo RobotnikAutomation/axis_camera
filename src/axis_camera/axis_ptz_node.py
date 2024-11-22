@@ -68,6 +68,8 @@ class AxisPTZ(threading.Thread):
         self.max_tilt_value = args['max_tilt_value']
         self.min_zoom_value = args['min_zoom_value']
         self.max_zoom_value = args['max_zoom_value']
+        self.min_zoom_augment = args['min_zoom_augment']
+        self.max_zoom_augment = args['max_zoom_augment']
         self.error_pos = args['error_pos']
         self.error_zoom = args['error_zoom']
         self.joint_states_topic = args['joint_states_topic']
@@ -171,12 +173,16 @@ class AxisPTZ(threading.Thread):
         if command.relative:            
             new_pan = self.invert_pan*command.pan + self.desired_pan
             new_tilt = self.invert_tilt*command.tilt + self.desired_tilt
-            new_zoom = (command.zoom / 30.0 ) * self.max_zoom_value + self.desired_zoom
+            # new_zoom = (command.zoom / self.max_zoom_augment ) * self.max_zoom_value + self.desired_zoom
+            new_zoom = (command.zoom - 1)/(self.max_zoom_augment - 1) * (self.max_zoom_value - self.min_zoom_value) + self.desired_zoom
             #rospy.loginfo('setCommandPTZ: new zoom = %.3lf +  %.3lf  = %.3lf', command.zoom, self.desired_zoom,new_zoom)
         else:
             new_pan = self.invert_pan*command.pan
             new_tilt = self.invert_tilt*command.tilt
-            new_zoom = (command.zoom / 30.0 ) * self.max_zoom_value
+            if command.zoom == 0:
+                command.zoom = 1
+            # new_zoom = (command.zoom / self.max_zoom_augment ) * self.max_zoom_value
+            new_zoom = (command.zoom - 1)/(self.max_zoom_augment - 1) * (self.max_zoom_value - self.min_zoom_value) 
             
             # Applies limit restrictions
         new_pan, new_tilt, new_zoom = self.enforcePTZLimits(new_pan, new_tilt, new_zoom)            
@@ -396,7 +402,8 @@ class AxisPTZ(threading.Thread):
         msg.header.stamp = rospy.Time.now()
         
         msg.name = [self.pan_joint, self.tilt_joint, self.zoom_joint]
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, self.current_ptz.zoom]
+        normalized_zoom = (self.current_ptz.zoom - self.min_zoom_value) / (self.max_zoom_value - self.min_zoom_value) * (self.max_zoom_augment - 1) + 1
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, normalized_zoom ]
         msg.velocity = [0.0, 0.0, 0.0]
         msg.effort = [0.0, 0.0, 0.0]
         
@@ -500,6 +507,8 @@ def main():
         'max_tilt_value': 1.57,
         'max_zoom_value': 20000,
         'min_zoom_value': 0,
+        'min_zoom_augment': 0.0,
+        'max_zoom_augment': 30.0,
         'ptz_rate': 5.0,
         'error_pos': 0.02,
         'error_zoom': 99.0,
