@@ -68,6 +68,7 @@ class AxisPTZ(threading.Thread):
         self.max_tilt_value = args['max_tilt_value']
         self.min_zoom_value = args['min_zoom_value']
         self.max_zoom_value = args['max_zoom_value']
+        self.max_standardized_zoom_value = args['max_standardized_zoom_value']
         self.error_pos = args['error_pos']
         self.error_zoom = args['error_zoom']
         self.joint_states_topic = args['joint_states_topic']
@@ -288,7 +289,7 @@ class AxisPTZ(threading.Thread):
             tilt_value = tilt + self.tilt_offset
         
         if zoom is None:
-            zoom_value = self.desired_zoom
+            zoom_value = self.desired_zoom * self.max_zoom_value / self.max_standardized_zoom_value
         else:
             zoom_value = zoom
         
@@ -396,7 +397,7 @@ class AxisPTZ(threading.Thread):
         msg.header.stamp = rospy.Time.now()
         
         msg.name = [self.pan_joint, self.tilt_joint, self.zoom_joint]
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, self.current_ptz.zoom]
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, (self.current_ptz.zoom * self.max_standardized_zoom_value / self.max_zoom_value)]
         msg.velocity = [0.0, 0.0, 0.0]
         msg.effort = [0.0, 0.0, 0.0]
         
