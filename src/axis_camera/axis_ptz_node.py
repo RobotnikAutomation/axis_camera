@@ -181,7 +181,7 @@ class AxisPTZ(threading.Thread):
             new_pan = self.invert_pan*command.pan + self.desired_pan
             new_tilt = self.invert_tilt*command.tilt + self.desired_tilt
             # new_zoom = (command.zoom / self.max_zoom_augment ) * self.max_zoom_value + self.desired_zoom
-            new_zoom = (command.zoom - 1)/(self.max_zoom_augment - 1) * (self.max_zoom_value - self.min_zoom_value) + self.desired_zoom
+            new_zoom = (command.zoom)/(self.max_zoom_augment - 1) * (self.max_zoom_value - self.min_zoom_value) + self.desired_zoom
             #rospy.loginfo('setCommandPTZ: new zoom = %.3lf +  %.3lf  = %.3lf', command.zoom, self.desired_zoom,new_zoom)
         else:
             new_pan = self.invert_pan*command.pan
