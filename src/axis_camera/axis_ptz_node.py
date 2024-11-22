@@ -200,18 +200,24 @@ class AxisPTZ(threading.Thread):
         """
         if pan > self.max_pan_value:
             pan = self.max_pan_value
+            rospy.logerr('PAN out of limits, setting max value')
         elif pan < self.min_pan_value:
             pan = self.min_pan_value
+            rospy.logerr('PAN out of limits, setting min value')
         
         if tilt > self.max_tilt_value:
             tilt = self.max_tilt_value
+            rospy.logerr('TILT out of limits, setting max value')
         elif tilt < self.min_tilt_value:
             tilt = self.min_tilt_value
+            rospy.logerr('TILT out of limits, setting min value')
         
         if zoom > self.max_zoom_value:
             zoom = self.max_zoom_value
+            # rospy.logerr('ZOOM out of limits, setting max value')
         elif zoom < self.min_zoom_value:
             zoom = self.min_zoom_value
+            # rospy.logerr('ZOOM out of limits, setting min value')
             
         return pan, tilt, zoom
 
@@ -403,7 +409,7 @@ class AxisPTZ(threading.Thread):
         
         msg.name = [self.pan_joint, self.tilt_joint, self.zoom_joint]
         normalized_zoom = (self.current_ptz.zoom - self.min_zoom_value) / (self.max_zoom_value - self.min_zoom_value) * (self.max_zoom_augment - 1) + 1
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, normalized_zoom ]
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, round(normalized_zoom) ]
         msg.velocity = [0.0, 0.0, 0.0]
         msg.effort = [0.0, 0.0, 0.0]
         
