@@ -34,8 +34,22 @@ In `launch/axis.launch`:
 
 #### 2. Create parameter files for your camera model
 
-- `config/axis_model_ptz_config.yaml`: ptz control parameters
 - `data/axis_model.ayml`: camera parameters
+- `config/axis_model_ptz_config.yaml`: ptz control parameters.
+  Define absolute zoom range and standardized zoom range. For example to control your camera with zoom augments in the range [x0 , x30]:
+
+  ```
+  min_zoom_step: 1
+  min_zoom_augment: 0.0
+  max_zoom_augment: 30.0
+  ```
+
+### Parameters
+#### Published Topics
+* ~zoom_parameters (robotnik_msgs/CameraParameters)
+  Zoom parameters publisher, containing min_zoom_step, max_zoom_augment, min_zoom_augment and a list of available augments
+* ~camera_params (robotnik_msgs/Axis)
+
 
 ### Testing your camera
 
@@ -75,5 +89,5 @@ relative: false"
 ```
 
 * params pan and tilt as float (radians)
-* param zoom as float (proportional zoom between 0 and 9999)
+* param zoom as float (proportional zoom between min_zoom_augment and max_zoom_augment)
 * param relative as bool (increases the current pan,tilt,zoom relative to the current values)
