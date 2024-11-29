@@ -129,12 +129,12 @@ class AxisPTZ(threading.Thread):
                 Sets the ros connections
         """
         ns = rospy.get_namespace()
-        self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
+        #self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
         # Publish camera zoom info
-        self.zoom_parameter_pub = rospy.Publisher("~zoom_parameters", CameraParameters, queue_size=10)
+        self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
 
@@ -416,7 +416,7 @@ class AxisPTZ(threading.Thread):
 
         self.zoom_parameter_pub.publish(zoom_parameters)
         # Publishes the current PTZ values
-        self.pub.publish(self.current_ptz)
+        #self.pub.publish(self.current_ptz)
         
         # Publish the joint state
         msg = JointState()
