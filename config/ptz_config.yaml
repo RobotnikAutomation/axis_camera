@@ -17,6 +17,8 @@ min_pan_value: -2.97
 max_pan_value: 2.97
 min_tilt_value: 0
 max_tilt_value: 1.57
+min_zoom_augment: 0.0
+max_zoom_augment: 30.0
 
 # Flag to invert received/sent pan and tilt values
 invert_ptz: true

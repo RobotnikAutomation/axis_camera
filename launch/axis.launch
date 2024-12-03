@@ -48,7 +48,7 @@
 	<!-- Important: Every model has its own config file. This config file will depend on the Axis configuration -->
 	<param name="camera_info_url" value="$(arg camera_info_url)"/>
 
-	<node pkg="axis_camera" type="axis_node.py" name="$(arg node_name)" output="screen"/>
+	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)" output="screen"/>
 	<!-- Republishes from Compressed to raw -->
 	<node pkg="image_transport" type="republish" name="$(arg node_name)_republisher" output="screen" args="compressed in:= raw out:=image_raw" if="$(arg run_republish)"/>
 	<!-- IMAGE PROC: Republish image topics by using camera info -->
@@ -56,4 +56,3 @@
 
 
 </launch>
-

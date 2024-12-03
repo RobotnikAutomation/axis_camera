@@ -42,6 +42,7 @@ from sensor_msgs.msg import JointState
 
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
+from robotnik_msgs.msg import CameraParameters
 import diagnostic_updater
 import diagnostic_msgs
 
@@ -68,6 +69,9 @@ class AxisPTZ(threading.Thread):
         self.max_tilt_value = args['max_tilt_value']
         self.min_zoom_value = args['min_zoom_value']
         self.max_zoom_value = args['max_zoom_value']
+        self.min_zoom_augment = args['min_zoom_augment']
+        self.max_zoom_augment = args['max_zoom_augment']
+        self.min_zoom_step = args['min_zoom_step']
         self.error_pos = args['error_pos']
         self.error_zoom = args['error_zoom']
         self.joint_states_topic = args['joint_states_topic']
@@ -125,11 +129,12 @@ class AxisPTZ(threading.Thread):
                 Sets the ros connections
         """
         ns = rospy.get_namespace()
-        self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
+        #self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
-
+        # Publish camera zoom info
+        self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
 
@@ -139,6 +144,10 @@ class AxisPTZ(threading.Thread):
         self.diagnostics_updater.add("Ptz state updater", self.getStateDiagnostic)
         # Creates a periodic callback to publish the diagnostics at desired freq
         self.diagnostics_timer = rospy.Timer(rospy.Duration(1.0), self.publishDiagnostics)
+
+        self.zoom_augments = []
+        for i in range(int(self.min_zoom_augment), int(self.max_zoom_augment) + 1, int(self.min_zoom_step)):
+            self.zoom_augments.append(i)
 
     def commandPTZCb(self, msg):
         """
@@ -171,12 +180,16 @@ class AxisPTZ(threading.Thread):
         if command.relative:            
             new_pan = self.invert_pan*command.pan + self.desired_pan
             new_tilt = self.invert_tilt*command.tilt + self.desired_tilt
-            new_zoom = command.zoom + self.desired_zoom
+            # new_zoom = (command.zoom / self.max_zoom_augment ) * self.max_zoom_value + self.desired_zoom
+            new_zoom = (command.zoom)/(self.max_zoom_augment - 1) * (self.max_zoom_value - self.min_zoom_value) + self.desired_zoom
             #rospy.loginfo('setCommandPTZ: new zoom = %.3lf +  %.3lf  = %.3lf', command.zoom, self.desired_zoom,new_zoom)
         else:
             new_pan = self.invert_pan*command.pan
             new_tilt = self.invert_tilt*command.tilt
-            new_zoom = command.zoom
+            if command.zoom == 0:
+                command.zoom = 1
+            # new_zoom = (command.zoom / self.max_zoom_augment ) * self.max_zoom_value
+            new_zoom = (command.zoom - 1)/(self.max_zoom_augment - 1) * (self.max_zoom_value - self.min_zoom_value) 
             
             # Applies limit restrictions
         new_pan, new_tilt, new_zoom = self.enforcePTZLimits(new_pan, new_tilt, new_zoom)            
@@ -194,18 +207,24 @@ class AxisPTZ(threading.Thread):
         """
         if pan > self.max_pan_value:
             pan = self.max_pan_value
+            rospy.logerr('PAN out of limits, setting max value')
         elif pan < self.min_pan_value:
             pan = self.min_pan_value
+            rospy.logerr('PAN out of limits, setting min value')
         
         if tilt > self.max_tilt_value:
             tilt = self.max_tilt_value
+            rospy.logerr('TILT out of limits, setting max value')
         elif tilt < self.min_tilt_value:
             tilt = self.min_tilt_value
+            rospy.logerr('TILT out of limits, setting min value')
         
         if zoom > self.max_zoom_value:
             zoom = self.max_zoom_value
+            # rospy.logerr('ZOOM out of limits, setting max value')
         elif zoom < self.min_zoom_value:
             zoom = self.min_zoom_value
+            # rospy.logerr('ZOOM out of limits, setting min value')
             
         return pan, tilt, zoom
 
@@ -388,15 +407,24 @@ class AxisPTZ(threading.Thread):
         """
             Publish to ROS server
         """
+        # Publish the zoom parameters
+        zoom_parameters = CameraParameters()
+        zoom_parameters.min_zoom_step = int(self.min_zoom_step)
+        zoom_parameters.zoom_lower_limit = int(self.min_zoom_augment)
+        zoom_parameters.zoom_upperlimit = int(self.max_zoom_augment)
+        zoom_parameters.zoom_augments = self.zoom_augments
+
+        self.zoom_parameter_pub.publish(zoom_parameters)
         # Publishes the current PTZ values
-        self.pub.publish(self.current_ptz)
+        #self.pub.publish(self.current_ptz)
         
         # Publish the joint state
         msg = JointState()
         msg.header.stamp = rospy.Time.now()
         
         msg.name = [self.pan_joint, self.tilt_joint, self.zoom_joint]
-        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, self.current_ptz.zoom]
+        normalized_zoom = (self.current_ptz.zoom - self.min_zoom_value) / (self.max_zoom_value - self.min_zoom_value) * (self.max_zoom_augment - 1) + 1
+        msg.position = [self.current_ptz.pan, self.current_ptz.tilt, round(normalized_zoom) ]
         msg.velocity = [0.0, 0.0, 0.0]
         msg.effort = [0.0, 0.0, 0.0]
         
@@ -500,6 +528,9 @@ def main():
         'max_tilt_value': 1.57,
         'max_zoom_value': 20000,
         'min_zoom_value': 0,
+        'min_zoom_step': 1,
+        'min_zoom_augment': 0.0,
+        'max_zoom_augment': 30.0,
         'ptz_rate': 5.0,
         'error_pos': 0.02,
         'error_zoom': 99.0,
