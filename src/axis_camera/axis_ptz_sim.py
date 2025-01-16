@@ -4,6 +4,8 @@
 """
    Node to control an Axis PTZ camera in simulation
 
+    NOTE: All the parameters are read from the ROS parameter server, could be changed in the config file. 
+   
     Subcriptors:
         - color/command (robotnik_msgs/ptz): Command to move the camera
     Publishers:
@@ -18,27 +20,24 @@
         - home/command (robotnik_msgs/set_ptz_home): Service to move the camera to the home position  
 """
 
-#pylint: disable=attribute-defined-outside-init
-#pylint: disable=wildcard-import
-#pylint: disable=useless-parent-delegation
-#pylint: disable=unused-wildcard-import
+# pylint: disable=attribute-defined-outside-init
+# pylint: disable=wildcard-import
+# pylint: disable=useless-parent-delegation
+# pylint: disable=unused-wildcard-import
+
+import rospy
 
 from rcomponent.rcomponent import *
-
-# Insert here general imports:
-# import math
-
 
 # Insert here msg and srv imports:
 from std_msgs.msg import String, Float64
 from robotnik_msgs.msg import StringStamped
-#from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
 
 from robotnik_msgs.srv import set_ptz, set_ptzRequest, set_ptzResponse
 from robotnik_msgs.srv import set_ptz_home, set_ptz_homeRequest, set_ptz_homeResponse
 
-class AxisPTZ(RComponent):
+class AxisPTZSim(RComponent):
     """
     Interface to control an Axis PTZ camera in simulation
     """
@@ -54,12 +53,12 @@ class AxisPTZ(RComponent):
         self._desired_freq = rospy.get_param('~desired_freq', 5.0)
 
         # Get the plublihsers topics names
-        self.pan_joint_controller_topic = rospy.get_param('~pan_joint_controller_topic', 
+        self.pan_joint_controller_topic = rospy.get_param('~pan_joint_controller_topic',
                                                           'top_ptz_camera_joint_pan_position_controller/command')
         self.tilt_joint_controller_topic = rospy.get_param('~tilt_joint_controller_topic',
-                                                            'top_ptz_camera_joint_tilt_position_controller/command')
+                                                           'top_ptz_camera_joint_tilt_position_controller/command')
         self.zoom_joint_controller_topic = rospy.get_param('~zoom_joint_controller_topic',
-                                                            'top_ptz_camera_joint_zoom_position_controller/command')
+                                                           'top_ptz_camera_joint_zoom_position_controller/command')
 
         # Get the subscribers topics names
         self.subscriber_color_command_topic = rospy.get_param('~subscriber_rgb_comand_topic', 'color/command')
@@ -76,6 +75,10 @@ class AxisPTZ(RComponent):
         self.zoom_max = rospy.get_param('~max_zoom_value', 30.0)
         self.zoom_min = rospy.get_param('~min_zoom_value', 0.0)
 
+        self.invert_pan = rospy.get_param('~invert_pan', False)
+        self.invert_tilt = rospy.get_param('~invert_tilt', False)
+
+
     def ros_setup(self):
         """Creates and inits ROS components"""
 
@@ -89,13 +92,16 @@ class AxisPTZ(RComponent):
         self.pub_command_zoom_sim = rospy.Publisher(self.zoom_joint_controller_topic, Float64, queue_size=10)
 
         # Subscriber
-        self.subscriber_color_commands = rospy.Subscriber(self.subscriber_color_command_topic, ptz, 
+        self.subscriber_color_commands = rospy.Subscriber(self.subscriber_color_command_topic, ptz,
                                                           self.sub_command_ptz_cb)
+        
+        # self.position_string = str(ptz.POSITION)
+        # self.velocity_string = ptz.VELOCITY
 
         # Services
-        self.service_server_ptz_color_commands = rospy.Service(self.server_color_comand_service, set_ptz, 
+        self.service_server_ptz_color_commands = rospy.Service(self.server_color_comand_service, set_ptz,
                                                                self.command_service_cb)
-        self.service_server_home_commands = rospy.Service(self.server_home_comand_service, set_ptz_home, 
+        self.service_server_home_commands = rospy.Service(self.server_home_comand_service, set_ptz_home,
                                                           self.home_service_cb)
 
         return 0
@@ -111,9 +117,9 @@ class AxisPTZ(RComponent):
 
         # Check topic health
 
-        if self.check_topics_health() is False:
-            self.switch_to_state(State.EMERGENCY_STATE)
-            return super().ready_state()
+        # if self.check_topics_health() is False:
+        #     self.switch_to_state(State.EMERGENCY_STATE)
+        #     return super().ready_state()
 
         # Publish topic with status
 
@@ -127,7 +133,7 @@ class AxisPTZ(RComponent):
         return super().ready_state()
 
     def emergency_state(self):
-        if self.check_topics_health() is True :
+        if self.check_topics_health() is True:
             self.switch_to_state(State.READY_STATE)
 
     def shutdown(self):
@@ -149,69 +155,112 @@ class AxisPTZ(RComponent):
         """
         Callback to receive the command to move the camera
         """
-        #self.tick_topics_health('example_sub')
-        rospy.logwarn("Received ptz command to move the camera")
+        # self.tick_topics_health('example_sub')
+        rospy.loginfo("Received ptz command to move the camera")
+
+        if self.invert_pan:
+            msg.pan = -msg.pan
+            rospy.loginfo(f'Invert pan is active, PAN: {msg.pan}')
+
+        if self.invert_tilt:
+            msg.tilt = -msg.tilt
+            rospy.loginfo(f'Invert tilt is active, TILT: {msg.tilt}')
+
+        # check mode
+        if not self.is_mode_correct(msg.mode):
+            return
 
         # check limits of the camera
         if self.out_camera_joint_limits(msg.pan, msg.tilt, msg.zoom):
             return
-        
+
         # perform the command
         self.perform_ptz_command(msg.pan, msg.tilt, msg.zoom)
 
-    def command_service_cb(self, req: set_ptzRequest) -> bool:
+    def command_service_cb(self, req: set_ptzRequest) -> set_ptzResponse:
         """
         Callback to receive the command to move the camera
         """
-        rospy.logwarn("Received set_ptz srv request to move the camera.")
+        rospy.loginfo("Received set_ptz srv request to move the camera.")
 
         response = set_ptzResponse()
+        current_pan = req.pan
+        current_tilt = req.tilt
 
-        if self.out_camera_joint_limits(req.pan, req.tilt, req.zoom):
+        if self.invert_pan:
+            current_pan = -current_pan
+            rospy.loginfo(f'Invert pan is active, PAN: {current_pan}')
+
+        if self.invert_tilt:
+            current_tilt = -current_tilt
+            rospy.loginfo(f'Invert tilt is active, TILT: {current_tilt}')
+
+        # check mode
+        if not self.is_mode_correct(req.mode):
             response.ret = False
-            return True
+            return response
+
+        # check limits of the camera
+        if self.out_camera_joint_limits(current_pan, current_tilt, req.zoom):
+            response.ret = False
+            return response
 
         # perform the command
-        self.perform_ptz_command(req.pan, req.tilt, req.zoom)
+        self.perform_ptz_command(current_pan, current_tilt, req.zoom)
 
         response.ret = True
-        return True
+        return response
 
-    def home_service_cb(self, req: set_ptz_homeRequest) -> bool:
+    def home_service_cb(self, req: set_ptz_homeRequest) -> set_ptz_homeResponse:
         """"
         Callback to receive the command to move the camera to the home position
         """
-        rospy.logwarn("Received set_ptz_home srv request to move the camera.")
+        rospy.loginfo("Received set_ptz_home srv request to move the camera.")
         response = set_ptz_homeResponse()
 
         # perform the command
         self.perform_ptz_command(0.0, 0.0, 0.0)
 
         response.ret = True
+        return response
+
+    def is_mode_correct(self, mode: str) -> bool:
+        """
+        Check if the mode is correct
+        """
+
+        if mode.lower() != ptz.POSITION.lower() and mode.lower() != ptz.VELOCITY.lower():
+            rospy.logerr(f"The mode {mode} is not correct, shoudl be {ptz.POSITION} or {ptz.VELOCITY}'")
+            return False
+
         return True
 
     def out_camera_joint_limits(self, pan: float, tilt: float, zoom: float) -> bool:
         """
         Check if the camera is out of the limits
         """
+        rospy.loginfo("Checking camera limits")
+
         if pan > self.pan_max or pan < self.pan_min:
-            rospy.logwarn("Pan is out of limits")
+            rospy.logerr(f'Pan: {pan} is out of limits')
             return True
-        
+
         if tilt > self.tilt_max or tilt < self.tilt_min:
-            rospy.logwarn("Tilt is out of limits")
+            rospy.logerr(f'Tilt: {tilt} is out of limits')
             return True
 
         if zoom > self.zoom_max or zoom < self.zoom_min:
-            rospy.logwarn("Zoom is out of limits")
+            rospy.logerr(f'Zoom: {zoom} is out of limits')
             return True
-        
+
         return False
-    
+
     def perform_ptz_command(self, pan: float, tilt: float, zoom: float):
         """
         Perform the command to move the camera
         """
+        rospy.loginfo("Performing ptz command to move the camera")
+
         self.pub_command_pan_sim.publish(pan)
         self.pub_command_tilt_sim.publish(tilt)
         self.pub_command_zoom_sim.publish(zoom)

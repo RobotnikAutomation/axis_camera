@@ -1,0 +1,22 @@
+desired_freq: 10
+
+subscriber_rgb_comand_topic: front_ptz_camera_control/ptz_command
+server_rgb_comand_service: front_ptz_camera_control/ptz_command
+server_home_comand_service: front_ptz_camera_control/home_command
+
+# Name of the camera joints Global namespace using '/'
+pan_joint_controller_topic: /robot/front_ptz_camera_joint_pan_position_controller/command
+tilt_joint_controller_topic: /robot/front_ptz_camera_joint_tilt_position_controller/command
+zoom_joint_controller_topic: /robot/front_ptz_camera_joint_zoom_position_controller/command
+
+# radians
+max_pan_value: 3.14
+min_pan_value: -3.14
+max_tilt_value: 1.57
+min_tilt_value: 0.0
+max_zoom_value: 30
+min_zoom_value: 0
+
+# Flag to invert received/sent pan and tilt values
+invert_pan: false
+invert_tilt: false
