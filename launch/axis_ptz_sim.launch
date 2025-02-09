@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<launch>
+
+    <arg name="node_name" default="axis_camera"/>
+    <arg name="ptz_sim_config_file" default="$(find axis_camera)/config/axis_sim_ptz_config.yaml"/>
+
+    <node pkg="axis_camera" type="axis_ptz_sim_node.py" name="$(arg node_name)_control" output="screen">
+        <rosparam file="$(arg ptz_sim_config_file)" command="load" subst_value="true"/>
+    </node>
+
+</launch>
+
