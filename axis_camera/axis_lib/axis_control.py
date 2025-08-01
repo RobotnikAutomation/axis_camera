@@ -16,6 +16,42 @@ class ControlAxis():
         self.hostname = hostname
         self.camera_id = camera_id
 
+    def getPTZInfo(self):
+        params = {}
+        conn = httplib.HTTPConnection(self.hostname)
+        query = { 'info':'' }
+        try:
+            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(query))
+            response = conn.getresponse()
+            if response.status == 200:
+                body = response.read()
+                body_lines = body.splitlines()
+                for line in body_lines:
+                    try:
+                        decoded_line = line.split('=', 2)
+                    except:
+                        decoded_line = line.decode().split('=', 2)
+                    if len(decoded_line) == 2:
+                        params[decoded_line[0].strip()] = decoded_line[1].strip()
+
+            params["error_reading"] = False
+            params["error_reading_msg"] = ''
+
+        except socket.timeout as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+        except socket.error as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+        except ValueError as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+        except Exception as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+
+        return params
+
     def sendPTZCommand(self, pan, tilt, zoom):
         ret = {
             'exception': False,
@@ -40,6 +76,32 @@ class ControlAxis():
             ret['exception'] = True
             ret['error_msg'] = e
         
+        return ret
+
+    def sendPTZVelocityCommand(self, pan, tilt, zoom):
+        ret = {
+            'exception': False,
+            'error_msg': '',
+            'status': 0
+        }
+
+        conn = httplib.HTTPConnection(self.hostname)
+        params = { 'continuouspantiltmove': f'{pan},{tilt}', 'continuouszoommove': zoom }
+
+        try:
+            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_id, urllib_parse.urlencode(params))
+
+            conn.request("GET", url)
+            ret['status'] = conn.getresponse().status
+            ret['url'] = url
+
+        except socket.timeout as e:
+            ret['exception'] = True
+            ret['error_msg'] = e
+        except socket.error as e:
+            ret['exception'] = True
+            ret['error_msg'] = e
+
         return ret
 
     def getPTZState(self):
