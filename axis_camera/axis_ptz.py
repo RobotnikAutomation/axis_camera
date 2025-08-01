@@ -341,6 +341,8 @@ class AxisPtz(Node):
         Returns:
             Trigger.Response: The response indicating success or failure.
         """
+        # Reinit previous velocity to avoid sending the same command again
+        self.previous_velocity = Twist()
         self.switchToControlState(self.idle)
         response.success = True
         response.message = 'Velocity control stopped successfully'
