@@ -316,7 +316,7 @@ class AxisPtz(Node):
         # If the velocity is zero, we set the control mode to idle
         if msg.linear.x == 0.0 and msg.linear.y == 0.0 and msg.angular.z == 0.0:
             self.previous_velocity = msg
-            self.switchFromVelocityToIdle()
+            self.switchToControlState(self.idle)
             return
         
         # If the velocity is the same as the previous one, we do not send the command
@@ -341,7 +341,7 @@ class AxisPtz(Node):
         Returns:
             Trigger.Response: The response indicating success or failure.
         """
-        self.switchFromVelocityToIdle()
+        self.switchToControlState(self.idle)
         response.success = True
         response.message = 'Velocity control stopped successfully'
         return response
@@ -415,14 +415,12 @@ class AxisPtz(Node):
         """ Callback for the SetPtz action. """
         if self.control_mode != self.idle:
             self.get_logger().error(f'Cannot set a new position goal when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.')
-        # if goal_handle.ptz.mode not in [PtzMsg.POSITION, PtzMsg.VELOCITY]:
             return GoalResponse.REJECT
         else:
             self.switchToControlState(PtzMsg.POSITION)
             return GoalResponse.ACCEPT
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
-        # self.control_mode = goal_handle.request.ptz.mode
         pan, tilt, zoom = self.getPtzDesiredPositionFromGoal(goal_handle.request)
         self.handleGoal(goal_handle, pan, tilt, zoom)
 
@@ -445,21 +443,12 @@ class AxisPtz(Node):
     def handleGoal(self, goal_handle : ServerGoalHandle, pan, tilt, zoom):
         self.time_last_command_received = self.get_clock().now()
         self.current_goal = goal_handle
-        # self.control_mode = goal_handle.request.ptz.mode
         self.setPtzDesiredPosition(pan, tilt, zoom)
-        # if self.control_mode == PtzMsg.POSITION:
-        #     self.setPtzDesiredPosition(pan, tilt, zoom)
-        # elif self.control_mode == PtzMsg.VELOCITY:
-        #     self.setPtzDesiredVelocity(pan, tilt, zoom)
         self.current_goal.execute()
 
     def handleCancel(self):
         self.current_goal = None
-        # if self.control_mode == PtzMsg.POSITION:
-        #     self.setPtzDesiredPosition(current_position = True)
-        # elif self.control_mode == PtzMsg.VELOCITY:
-        #     self.setPtzDesiredVelocity(0, 0, 0)
-        self.switchFromPositionToIdle()
+        self.switchToControlState(self.idle)
         self.action_result.response.success = False
         self.action_result.response.message = 'PTZ action cancelled'
 
@@ -491,7 +480,6 @@ class AxisPtz(Node):
                 self.current_goal = None
                 self.action_result.response.success = False
                 self.action_result.response.message = 'PTZ position not reached in time'
-                # self.switchFromPositionToIdle()
                 break
 
             self.publishFeedback(self.current_goal)
