@@ -16,6 +16,8 @@ class ControlAxis():
         self.hostname = hostname
         self.camera_id = camera_id
 
+    # TODO: Handle when connection is not available
+
     def getPTZInfo(self):
         params = {}
         conn = httplib.HTTPConnection(self.hostname)

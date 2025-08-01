@@ -33,8 +33,6 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 from math import pi as PI
-from math import degrees as rad2deg
-from math import radians as deg2rad
 from copy import deepcopy
 
 from threading import Thread
@@ -46,325 +44,16 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.action.server import ServerGoalHandle
 from rclpy.callback_groups import ReentrantCallbackGroup
 
-from axis_camera.axis_lib.axis_control import ControlAxis
+from axis_camera.axis_lib.ptz import Ptz
+from axis_camera.axis_lib.joints import Joint, ZoomJoint
 
 from robotnik_actuators_msgs.msg import Ptz as PtzMsg
 from robotnik_actuators_msgs.action import SetPtz
 from robotnik_sensors_msgs.msg import Axis
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import Twist
 
-
-class Joint:
-    def __init__(self, min_position, max_position, joint_name, offset, error, invert=False):
-        self._min = min_position
-        self._max = max_position
-        self._total_range = max_position - min_position
-        self._name = joint_name
-        self._offset = offset
-        self._error = error
-        self._invert = -1 if invert else 1
-        self._raw_current_position = 0.0
-        self._current_position_processed = 0.0
-        self._raw_user_desired_position = 0.0
-        self._user_desired_position_processed = 0.0
-        self._real_desired_position = self._offset
-        self._velocity = 0.0
-    
-    def updatePosition(self, position):
-        """
-        Update the current position of the joint.
-
-        This function takes the position received from the real camera
-        and transforms it to the position of the camera frame.
-        
-        Args:
-            position (float): The position received from the real camera.
-        """
-        # Position read from the camera
-        self._raw_current_position = position
-        # Apply offset and inversion to real position and normalize the angle. Data used in joint_states.
-        self._current_position_processed = self._invert * self._normalizeAngle(position - self._offset)
-    
-    def setDesiredPosition(self, position):
-        """
-        Set the desired position of the camera.
-
-        This method transforms the desired position in reference to the camera frame
-        into the real position of the camera. The transformation is done by applying
-        an inversion factor and an offset.
-
-        Args:
-            position (float): The desired position in reference to the camera frame.
-        """
-        # Position received from user
-        self._raw_user_desired_position = position
-        # Enforce limits to the desired position [min', max']. Target joint_states.
-        self._user_desired_position_processed = self._normalizeAngle(self._enforceLimits(position))
-        # Calculate the real desired position adding the offset and taking into account the inversion
-        self._real_desired_position = self._invert * rad2deg(self._user_desired_position_processed + self._offset)
-
-    def _enforceLimits(self, position, use_offset = True) -> float:
-        """
-        Enforces the limits of the joint position.
-
-        This method ensures that the position is within the defined limits
-        of the joint. If the position is outside the limits, it will be
-        clamped to the nearest limit.
-
-        Args:
-            position (float): The position to enforce limits on.
-            use_offset (bool): If True, the offset will be considered when enforcing limits.
-
-        Returns:
-            float: The enforced position within the limits.
-        """
-        offset = self._offset if use_offset else 0.0
-        return max(self._min - offset, min(self._max - offset, position))
-
-    def _normalizeAngle(self, angle) -> float:
-        normalized_angle = angle
-        while normalized_angle > PI:
-            normalized_angle -= 2 * PI
-        while normalized_angle < -PI:
-            normalized_angle += 2 * PI
-        
-        return normalized_angle
-
-    def setCurrentPositionAsDesired(self):
-        """
-        Sets the current position as the desired position.
-        
-        This method is useful when the current position is already the desired one,
-        and we want to avoid sending unnecessary commands to the camera.
-        """
-        self.setDesiredPosition(self._current_position_processed)
-
-    def isInDesiredPosition(self):
-        """
-        Checks if the current position is within the desired position range.
-
-        Returns:
-            bool: True if the current position is within the desired range, False otherwise.
-        """
-        return abs(self._current_position_processed - self._user_desired_position_processed) <= self._error
-
-    def getRemainingPosition(self):
-        """
-        Returns the remaining position to reach the desired position.
-
-        This method calculates the difference between the desired position and the current position.
-
-        Returns:
-            float: The remaining position to reach the desired position.
-        """
-        return self._user_desired_position_processed - self._current_position_processed
-
-    def getCurrentPosition(self):
-        return self._current_position_processed
-
-    def getRawCurrentPosition(self):
-        return self._raw_current_position
-
-    def getName(self):
-        return self._name
-
-    def setDesiredVelocity(self, velocity):
-        self._velocity = velocity
-
-    def getDesiredVelocity(self):
-        """
-        Returns the desired velocity of the joint.
-
-        This method returns the desired velocity that has been set for the joint.
-        """
-        return self._velocity
-
-class ZoomJoint(Joint):
-    def __init__(self, min_position, max_position, joint_name, offset, error, min_augment, max_augment, min_step):
-        super().__init__(min_position, max_position, joint_name, offset, error, invert = False)
-        self._min_augment = min_augment
-        self._max_augment = max_augment
-        self._total_augment = max_augment - min_augment
-        self._min_step = min_step
-    
-    def updatePosition(self, position):
-        # Position read from the camera
-        self._raw_current_position = position
-        # Apply offset to real position. This is the position used in joint_states.
-        self._current_position_processed = position - self._offset
-
-    def setCurrentPositionAsDesired(self):
-        self.setDesiredPosition(self._current_position_processed * self._total_augment / self._total_range)
-        # self._raw_user_desired_position = self._current_position_processed
-        # self._real_desired_position = self._enforceLimits(self._raw_user_desired_position + self._offset)
-    
-    def setDesiredPosition(self, position):
-        """
-        Set the desired position of the zoom joint. This should be a value between the minimum and maximum augment values.
-        """
-        # Apply offset to min and max augments
-        max_augment = round(self._max_augment - self._offset * self._total_augment / self._total_range)
-        min_augment = round(self._min_augment - self._offset * self._total_augment / self._total_range)
-
-        # Desired position received from user
-        self._raw_user_desired_position = round(position)
-
-        # Enforce limits to the user desired position [min_augment', max_augment']
-        limited_position = max(min_augment, min(max_augment, position))
-
-        # Process the desired position to the camera frame in zoom units [min', max']. Target joint_states.
-        self._user_desired_position_processed = self._enforceLimits((self._total_range / self._total_augment) * limited_position  + self._min)
-        # Calculate the real desired position adding the offset
-        self._real_desired_position = self._user_desired_position_processed + self._offset
-
-    def getNormalizedPosition(self):
-        """
-        Returns the normalized position of the zoom joint.
-
-        The normalized position is calculated based on the current position,
-        the minimum and maximum augment values, and the minimum step.
-        """
-        return (self._total_augment / self._total_range) * (self._current_position_processed - self._min)
-
-class Ptz:
-    def __init__(self, hostname : str, camera_id : int, pan : Joint, tilt : Joint, zoom : ZoomJoint):
-        self.controller = ControlAxis(hostname, camera_id)
-        self.hostname = hostname
-        self.pan = pan
-        self.tilt = tilt
-        self.zoom = zoom
-        self.iris = -1
-        self.autoiris = False
-        self.focus = -1
-        self.autofocus = False
-        self._is_syncronized = False
-        info = self.controller.getPTZInfo()
-        self._pan_tilt_velocity_control = "continuouspantiltmove" in info.keys()
-        self._zoom_velocity_control = "continuouszoommove" in info.keys()
-    
-    def updatePtzPosition(self):
-        """ Updates the PTZ position with new values. """
-        # First time saves the current values
-        ptz_read = self.controller.getPTZState()
-        if not ptz_read["error_reading"]:
-            self.pan.updatePosition(ptz_read["pan"])
-            self.tilt.updatePosition(ptz_read["tilt"])
-            self.zoom.updatePosition(ptz_read["zoom"])
-            self.iris = ptz_read["iris"]
-            self.autoiris = ptz_read["autoiris"]
-            self.focus = ptz_read["focus"]
-            self.autofocus = ptz_read["autofocus"]
-        
-            if not self._is_syncronized:
-                self.setCurrentPtzPositionAsDesired()
-                self._is_syncronized = True
-        
-        return ptz_read["error_reading"], ptz_read["error_reading_msg"]
-    
-    def isSyncronized(self):
-        """ Checks if the PTZ state is synchronized. """
-        return self._is_syncronized
-    
-    def setDesiredPtzPosition(self, pan = None, tilt = None, zoom = None):
-        """ Sets the desired PTZ position with new values. """
-        if pan is not None:
-            self.pan.setDesiredPosition(pan)
-        if tilt is not None:
-            self.tilt.setDesiredPosition(tilt)
-        if zoom is not None:
-            self.zoom.setDesiredPosition(zoom)
-
-    def setDesiredVelocity(self, pan = 0, tilt = 0, zoom = 0):
-        self.pan.setDesiredVelocity(pan)
-        self.tilt.setDesiredVelocity(tilt)
-        self.zoom.setDesiredVelocity(zoom)
-
-    def setCurrentPtzPositionAsDesired(self):
-        """ Sets the current PTZ position as the desired position. """
-        self.pan.setCurrentPositionAsDesired()
-        self.tilt.setCurrentPositionAsDesired()
-        self.zoom.setCurrentPositionAsDesired()
-    
-    def getRemainingPtzPosition(self):
-        """
-        Returns the remaining position to reach the desired PTZ position.
-
-        This method calculates the difference between the desired position and the current position
-        for each joint (pan, tilt, zoom).
-
-        Returns:
-            tuple: A tuple containing the remaining pan, tilt, and zoom positions.
-        """
-        return (self.pan.getRemainingPosition(), 
-                self.tilt.getRemainingPosition(), 
-                self.zoom.getRemainingPosition())
-    
-    def isInDesiredPosition(self):
-        """
-        Checks if the PTZ is in the desired position.
-
-        This method checks if the current position of the pan, tilt, and zoom
-        joints are within their respective desired positions.
-        
-        Returns:
-            bool: True if all joints are in their desired positions, False otherwise.
-        """
-        return (self.pan.isInDesiredPosition() and 
-                self.tilt.isInDesiredPosition() and 
-                self.zoom.isInDesiredPosition())
-    
-    def sendPtzCommand(self, pan = None, tilt = None, zoom = None):
-        """
-        Sends the PTZ command to the camera.
-
-        This method sends the current desired position of the PTZ to the camera.
-        If a specific pan, tilt, or zoom value is provided, it will override the
-        current desired position for that axis.
-        """
-        self.setDesiredPtzPosition(pan, tilt, zoom)
-
-        control = self.controller.sendPTZCommand(
-            self.pan._real_desired_position,
-            self.tilt._real_desired_position,
-            self.zoom._real_desired_position
-        )
-
-        if control['status'] != 204 and not control['exception']:
-            msg = 'sendPTZCommand: Error getting response. url = %s%s'% (self.hostname, control['url'])
-            return False, msg
-        elif control['exception']:
-            msg = 'sendPTZCommand: Exception connecting to the camera: %s '% (control['error_msg'])
-            return False, msg
-        else:
-            return True, 'PTZ command sent successfully to %s' % (self.hostname)
-        
-    def sendPtzDesiredVelocityCommand(self):
-        return self.sendPtzVelocityCommand(
-            self.pan.getDesiredVelocity(),
-            self.tilt.getDesiredVelocity(),
-            self.zoom.getDesiredVelocity()
-        )
-
-    def sendPtzVelocityCommand(self, pan = 0, tilt = 0, zoom = 0):
-        self.setDesiredVelocity(pan, tilt, zoom)
-
-        control = self.controller.sendPTZVelocityCommand(
-            self.pan.getDesiredVelocity(),
-            self.tilt.getDesiredVelocity(),
-            self.zoom.getDesiredVelocity()
-        )
-
-        if control['status'] != 204 and not control['exception']:
-            msg = 'sendPtzVelocityCommand: Error getting response. url = %s%s'% (self.hostname, control['url'])
-            return False, msg
-        elif control['exception']:
-            msg = 'sendPtzVelocityCommand: Exception connecting to the camera: %s '% (control['error_msg'])
-            return False, msg
-        else:
-            return True, 'PTZ command sent successfully to %s' % (self.hostname)
-
-    def stopPtzVelocityCommand(self):
-        return self.sendPtzVelocityCommand(0, 0, 0)
+from std_srvs.srv import Trigger
 
 class AxisPtz(Node):
     """
@@ -382,6 +71,7 @@ class AxisPtz(Node):
         self.command_sent = False
         self.idle = "idle"
         self.control_mode = self.idle
+        self.previous_velocity = Twist()
 
         # Timer to get/release ptz control
         if self.use_control_timeout:
@@ -434,7 +124,7 @@ class AxisPtz(Node):
             self.readParam('pan.min_value', -PI), 
             self.readParam('pan.max_value', PI), 
             self.readParam('pan.joint', 'axis_pan_joint'),
-            self.readParam('pan.offset', 0.5),
+            self.readParam('pan.offset', 0.0),
             self.readParam('pan.error_pos', 0.02),
             invert = self.readParam('pan.invert', False)
         )
@@ -450,7 +140,7 @@ class AxisPtz(Node):
             self.readParam('zoom.min_value', 1.0), 
             self.readParam('zoom.max_value', 9999.0), 
             self.readParam('zoom.joint', 'axis_zoom_joint'),
-            self.readParam('zoom.offset', 1000),
+            self.readParam('zoom.offset', 0.0),
             self.readParam('zoom.error_pos', 99.0),
             self.readParam('zoom.min_augment', 0.0),
             self.readParam('zoom.max_augment', 30.0),
@@ -480,9 +170,23 @@ class AxisPtz(Node):
             SetPtz,
             '~/home_ptz',
             self.setPtzExecuteCb,
+            goal_callback = self.setPtzGoalCb,
             handle_accepted_callback = self.homeCb,
             cancel_callback = self.cancelHomeCb,
             callback_group = ReentrantCallbackGroup()
+        )
+
+        self.velocity_sub = self.create_subscription(
+            Twist,
+            '~/velocity',
+            self.velocityCb,
+            1
+        )
+
+        self.stop_velocity_control_service = self.create_service(
+            Trigger,
+            '~/stop_velocity_control',
+            self.stopVelocityControlCb
         )
 
         self.joint_state_pub = self.create_publisher(JointState, '~/joint_states', 1)
@@ -502,6 +206,31 @@ class AxisPtz(Node):
             # Publish ROS msgs
             self.publishROS()
             rate.sleep()
+
+    def switchToControlState(self, new_state : str):
+        """
+        Switches the control mode of the PTZ camera.
+
+        This method changes the control mode to the specified new state.
+        It also resets the desired position and velocity to the current position
+        when switching to idle mode.
+        
+        Args:
+            new_state (str): The new control state to switch to.
+        """
+        if self.control_mode == new_state:
+            return
+        
+        if self.idle not in [new_state, self.control_mode]:
+            self.get_logger().error(f'Cannot switch to {new_state} control mode from {self.control_mode} mode. Please, stop current control first.')
+            return
+        
+        if self.control_mode == PtzMsg.POSITION and new_state == self.idle:
+            self.switchFromPositionToIdle()
+        elif self.control_mode == PtzMsg.VELOCITY and new_state == self.idle:
+            self.switchFromVelocityToIdle()
+        else:
+            self.control_mode = new_state
 
     def getPtzDesiredPositionFromGoal(self, goal):
         if goal.ptz.relative:
@@ -555,6 +284,77 @@ class AxisPtz(Node):
             self.get_logger().error(msg)
         else:
             self.command_sent = True
+    
+    def switchFromVelocityToIdle(self):
+        """
+        Stops the velocity control of the PTZ camera.
+
+        This method sets the control mode to idle and resets the desired velocity.
+        """
+        self.control_mode = self.idle
+        self.setPtzDesiredVelocity(0, 0, 0)
+        self.sendPtzVelocityCommand()
+    
+    def velocityCb(self, msg: Twist):
+        """
+        Callback for the velocity topic.
+
+        This method is called when a new velocity message is received. It sets the desired velocity
+        for the PTZ camera based on the received message.
+        
+        Args:
+            msg (Twist): The velocity message containing pan, tilt, and zoom velocities.
+        """
+
+        # If the camera is being controlled, we cannot set the velocity
+        if self.control_mode == PtzMsg.POSITION:
+            self.logger().error(f'Cannot set velocity when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.',
+                                 throttle_duration_sec = 5.0
+                                )
+            return
+        
+        # If the velocity is zero, we set the control mode to idle
+        if msg.linear.x == 0.0 and msg.linear.y == 0.0 and msg.angular.z == 0.0:
+            self.previous_velocity = msg
+            self.switchFromVelocityToIdle()
+            return
+        
+        # If the velocity is the same as the previous one, we do not send the command
+        if msg == self.previous_velocity:
+            return
+        
+        # If the velocity is different, we set the control mode to velocity and send the command
+        self.previous_velocity = msg
+        self.setPtzDesiredVelocity(msg.linear.x, msg.linear.y, msg.angular.z)
+
+    def stopVelocityControlCb(self, request : Trigger.Request, response : Trigger.Response):
+        """
+        Callback for the stop velocity control service.
+
+        This method is called when the stop velocity control service is requested. It stops the velocity control
+        of the PTZ camera by setting the control mode to idle and resetting the desired velocity.
+        
+        Args:
+            request: The service request.
+            response: The service response.
+        
+        Returns:
+            Trigger.Response: The response indicating success or failure.
+        """
+        self.switchFromVelocityToIdle()
+        response.success = True
+        response.message = 'Velocity control stopped successfully'
+        return response
+    
+    def switchFromPositionToIdle(self):
+        """
+        Stops the position control of the PTZ camera.
+
+        This method sets the control mode to idle and resets the desired position.
+        """
+        self.control_mode = self.idle
+        self.setPtzDesiredPosition(current_position = True)
+        self.sendPtzCommand()
 
     def sendPtzCommand(self, pan = None, tilt = None, zoom = None):
         """
@@ -613,13 +413,16 @@ class AxisPtz(Node):
 
     def setPtzGoalCb(self, goal_handle : ServerGoalHandle):
         """ Callback for the SetPtz action. """
-        if goal_handle.ptz.mode not in [PtzMsg.POSITION, PtzMsg.VELOCITY]:
+        if self.control_mode != self.idle:
+            self.get_logger().error(f'Cannot set a new position goal when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.')
+        # if goal_handle.ptz.mode not in [PtzMsg.POSITION, PtzMsg.VELOCITY]:
             return GoalResponse.REJECT
         else:
+            self.switchToControlState(PtzMsg.POSITION)
             return GoalResponse.ACCEPT
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
-        self.control_mode = goal_handle.request.ptz.mode
+        # self.control_mode = goal_handle.request.ptz.mode
         pan, tilt, zoom = self.getPtzDesiredPositionFromGoal(goal_handle.request)
         self.handleGoal(goal_handle, pan, tilt, zoom)
 
@@ -631,7 +434,6 @@ class AxisPtz(Node):
     
     def homeCb(self, goal_handle : ServerGoalHandle):
         """ Callback for the Home action. """
-        self.control_mode = PtzMsg.POSITION
         self.handleGoal(goal_handle, 0.0, 0.0, 0.0)
 
     def cancelHomeCb(self, goal_handle : ServerGoalHandle):
@@ -643,22 +445,23 @@ class AxisPtz(Node):
     def handleGoal(self, goal_handle : ServerGoalHandle, pan, tilt, zoom):
         self.time_last_command_received = self.get_clock().now()
         self.current_goal = goal_handle
-        self.control_mode = goal_handle.request.ptz.mode
-        if self.control_mode == PtzMsg.POSITION:
-            self.setPtzDesiredPosition(pan, tilt, zoom)
-        elif self.control_mode == PtzMsg.VELOCITY:
-            self.setPtzDesiredVelocity(pan, tilt, zoom)
+        # self.control_mode = goal_handle.request.ptz.mode
+        self.setPtzDesiredPosition(pan, tilt, zoom)
+        # if self.control_mode == PtzMsg.POSITION:
+        #     self.setPtzDesiredPosition(pan, tilt, zoom)
+        # elif self.control_mode == PtzMsg.VELOCITY:
+        #     self.setPtzDesiredVelocity(pan, tilt, zoom)
         self.current_goal.execute()
 
     def handleCancel(self):
         self.current_goal = None
-        if self.control_mode == PtzMsg.POSITION:
-            self.setPtzDesiredPosition(current_position = True)
-        elif self.control_mode == PtzMsg.VELOCITY:
-            self.setPtzDesiredVelocity(0, 0, 0)
+        # if self.control_mode == PtzMsg.POSITION:
+        #     self.setPtzDesiredPosition(current_position = True)
+        # elif self.control_mode == PtzMsg.VELOCITY:
+        #     self.setPtzDesiredVelocity(0, 0, 0)
+        self.switchFromPositionToIdle()
         self.action_result.response.success = False
         self.action_result.response.message = 'PTZ action cancelled'
-        self.control_mode = self.idle
 
     def setPtzExecuteCb(self, goal_handle : ServerGoalHandle):
         """
@@ -688,10 +491,12 @@ class AxisPtz(Node):
                 self.current_goal = None
                 self.action_result.response.success = False
                 self.action_result.response.message = 'PTZ position not reached in time'
+                # self.switchFromPositionToIdle()
                 break
 
             self.publishFeedback(self.current_goal)
         
+        self.switchToControlState(self.idle)
         return self.action_result
 
     def publishFeedback(self, goal_handle: ServerGoalHandle):
