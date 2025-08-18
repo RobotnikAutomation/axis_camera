@@ -12,15 +12,52 @@ import socket
 import math
 
 class ControlAxis():
-    def __init__(self, hostname, camera_id = 1):
+    def __init__(self, hostname, camera_id = 1, timeout = 1000):
         self.hostname = hostname
         self.camera_id = camera_id
+        self.timeout = timeout
 
     # TODO: Handle when connection is not available
 
+    def getPTZStatus(self):
+        params = {}
+        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
+        query = { 'query':'status' }
+        try:
+            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(query))
+            response = conn.getresponse()
+            if response.status == 200:
+                body = response.read()
+                body_lines = body.splitlines()
+                for line in body_lines:
+                    try:
+                        decoded_line = line.split('=', 2)
+                    except:
+                        decoded_line = line.decode().split('=', 2)
+                    if len(decoded_line) == 2:
+                        params[decoded_line[0].strip()] = decoded_line[1].strip()
+
+            params["error_reading"] = False
+            params["error_reading_msg"] = ''
+
+        except socket.timeout as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+        except socket.error as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+        except ValueError as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+        except Exception as e:
+            params["error_reading"]= True
+            params["error_reading_msg"] = e
+
+        return params
+
     def getPTZInfo(self):
         params = {}
-        conn = httplib.HTTPConnection(self.hostname)
+        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
         query = { 'info':'' }
         try:
             conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(query))
@@ -61,7 +98,7 @@ class ControlAxis():
             'status': 0
         }
 
-        conn = httplib.HTTPConnection(self.hostname)
+        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
         params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
         
         try:		   
@@ -81,13 +118,37 @@ class ControlAxis():
         return ret
 
     def sendPTZVelocityCommand(self, pan, tilt, zoom):
+        """
+            Sends the PTZ velocity command to the camera.
+            pan, tilt and zoom are in radians
+        """
+
+        """
+        Extracted from AXIS M5525-E PTZ Dome 
+        pan tilt speeds are in degrees per second
+        speeds = (
+            "value=1|speed=1.8,"
+            "value=28|speed=5,"
+            "value=40|speed=11,"
+            "value=44|speed=14,"
+            "value=62|speed=37,"
+            "value=66|speed=44,"
+            "value=73|speed=59,"
+            "value=79|speed=75,"
+            "value=84|speed=90,"
+            "value=88|speed=103,"
+            "value=93|speed=121,"
+            "value=97|speed=137,"
+            "value=100|speed=150"
+        )
+        """
         ret = {
             'exception': False,
             'error_msg': '',
             'status': 0
         }
 
-        conn = httplib.HTTPConnection(self.hostname)
+        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
         params = { 'continuouspantiltmove': f'{pan},{tilt}', 'continuouszoommove': zoom }
 
         try:
@@ -111,7 +172,7 @@ class ControlAxis():
             Gets the current ptz state/position of the camera
         """
         ptz_read = {}
-        conn = httplib.HTTPConnection(self.hostname)
+        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
         params = { 'query':'position' }
         try:
             conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(params))
