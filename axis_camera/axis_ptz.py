@@ -79,8 +79,7 @@ class AxisPtz(Node):
 
         self.time_last_command_received = self.get_clock().now()
         self.duration_last_command_watchdog = rclpy.time.Duration(seconds=10.0)
-
-        self.default_control_mode = PtzMsg.POSITION
+        self.last_time_moving = None
 
         self.rosSetup()
         self.ptz.updatePtzPosition()
@@ -94,6 +93,13 @@ class AxisPtz(Node):
         return self.getParameterValue(self.get_parameter(param_name).get_parameter_value())
     
     def getParameterValue(self, parameter_value):
+        """
+        Converts the parameter value to its corresponding Python type.
+        Args:
+            parameter_value (rclpy.ParameterValue): The value of the parameter.
+        Returns:
+            The value of the parameter converted to its corresponding Python type.
+        """
         param = None
         if rclpy.Parameter.Type.BOOL.value == parameter_value.type:
             param = parameter_value.bool_value
@@ -116,10 +122,12 @@ class AxisPtz(Node):
         return param
 
     def rosReadParams(self):
+        """ Reads parameters from the ROS parameter server."""
         self.hostname = self.readParam('hostname', '192.168.0.185')
         self.camera_id = self.readParam('camera_id', 1)
         self.camera_model = self.readParam('camera_model', 'axis_m5525')
         self.desired_freq = self.readParam('desired_freq', 20.0)
+        self.connection_timeout = self.readParam('connection_timeout', 5.0)
         pan = Joint(
             self.readParam('pan.min_value', -PI), 
             self.readParam('pan.max_value', PI), 
@@ -130,7 +138,7 @@ class AxisPtz(Node):
         )
         tilt = Joint(
             self.readParam('tilt.min_value', 0.0), 
-            self.readParam('tilt.max_value', 1.50), 
+            self.readParam('tilt.max_value', PI/2),
             self.readParam('tilt.joint', 'axis_tilt_joint'),
             self.readParam('tilt.offset', 0.0),
             self.readParam('tilt.error_pos', 0.02),
@@ -138,22 +146,37 @@ class AxisPtz(Node):
         )
         zoom = ZoomJoint(
             self.readParam('zoom.min_value', 1.0), 
-            self.readParam('zoom.max_value', 9999.0), 
+            self.readParam('zoom.max_value', 9999.0),
             self.readParam('zoom.joint', 'axis_zoom_joint'),
             self.readParam('zoom.offset', 0.0),
             self.readParam('zoom.error_pos', 99.0),
             self.readParam('zoom.min_augment', 0.0),
             self.readParam('zoom.max_augment', 30.0),
-            self.readParam('zoom.min_step', 1.0)
         )
 
-        self.ptz = Ptz(self.hostname, self.camera_id, pan, tilt, zoom)
+        ptz_connected = False
+        while not ptz_connected and rclpy.ok():
+            try:
+                self.get_logger().info(f'Connecting to PTZ camera {self.hostname}...')
+                # Initialize the PTZ camera with the provided parameters
+                self.ptz = Ptz(self.hostname, self.camera_id, pan, tilt, zoom, self.connection_timeout)
+                ptz_connected = True
+                self.get_logger().info(f'Successfully connected to PTZ camera {self.hostname}')
+            except Exception as e:
+                self.get_logger().error(f'Error connecting to PTZ camera: {e}')
 
         self.use_control_timeout = self.readParam('use_control_timeout', False)
         self.control_timeout_value = self.readParam('control_timeout_value', 0.5)
+        camera_not_moving_timeout_value = self.readParam('camera_not_moving_timeout_value', 3.0)
+        self.camera_not_moving_timeout = rclpy.time.Duration(seconds=camera_not_moving_timeout_value)
         self.send_constantly = self.readParam('send_constantly', False)
 
     def rosSetup(self):
+        """
+        Sets up the ROS interfaces for the PTZ camera.
+        This method initializes the action servers, publishers, and subscribers
+        required for controlling the PTZ camera.
+        """
         self.set_ptz_action_server = ActionServer(
             self,
             SetPtz,
@@ -172,28 +195,49 @@ class AxisPtz(Node):
             self.setPtzExecuteCb,
             goal_callback = self.setPtzGoalCb,
             handle_accepted_callback = self.homeCb,
-            cancel_callback = self.cancelHomeCb,
+            cancel_callback = self.cancelPtzCb,
             callback_group = ReentrantCallbackGroup()
         )
 
-        self.velocity_sub = self.create_subscription(
-            Twist,
-            '~/velocity',
-            self.velocityCb,
-            1
-        )
+        if self.ptz.hasVelocityControl():
+            self.velocity_sub = self.create_subscription(
+                Twist,
+                '~/cmd_vel',
+                self.velocityCb,
+                1
+            )
 
-        self.stop_velocity_control_service = self.create_service(
-            Trigger,
-            '~/stop_velocity_control',
-            self.stopVelocityControlCb
-        )
+            self.stop_velocity_control_service = self.create_service(
+                Trigger,
+                '~/stop_velocity_control',
+                self.stopVelocityControlCb
+            )
 
         self.joint_state_pub = self.create_publisher(JointState, '~/joint_states', 1)
         self.axis_status_pub = self.create_publisher(Axis, '~/status', 1)
         self.axis_status_raw_pub = self.create_publisher(Axis, '~/status_raw', 1)
 
+    def handlePtzStoppedMoving(self):
+        if self.ptz.isMoving():
+            self.last_time_moving = self.get_clock().now()
+
+        # If the camera is not moving and the control mode is not idle, we set control mode to idle
+        if self.last_time_moving and \
+            self.control_mode != self.idle and \
+            (self.get_clock().now() - self.last_time_moving > self.camera_not_moving_timeout):
+
+            self.get_logger().info(f'PTZ camera is not moving, switching to idle mode')
+            self.switchToControlState(self.idle)
+            self.last_time_moving = None
+
     def controlLoop(self):
+        """
+        Main control loop for the PTZ camera.
+        This method runs in a separate thread and continuously checks the control mode.
+        If the camera is synchronized and the control mode is set to position or velocity,
+        it sends the appropriate command to the camera.
+        It also publishes the current state of the PTZ camera.
+        """
         rate = self.create_rate(self.desired_freq)
         while rclpy.ok():
             if self.ptz.isSyncronized() and (self.send_constantly or not self.command_sent):
@@ -202,6 +246,7 @@ class AxisPtz(Node):
                 elif self.control_mode == PtzMsg.VELOCITY:
                     self.sendPtzVelocityCommand()
 
+            self.handlePtzStoppedMoving()
             self.ptz.updatePtzPosition()
             # Publish ROS msgs
             self.publishROS()
@@ -225,6 +270,7 @@ class AxisPtz(Node):
             self.get_logger().error(f'Cannot switch to {new_state} control mode from {self.control_mode} mode. Please, stop current control first.')
             return
         
+        self.get_logger().info(f'Switching control mode from {self.control_mode} to {new_state}')
         if self.control_mode == PtzMsg.POSITION and new_state == self.idle:
             self.switchFromPositionToIdle()
         elif self.control_mode == PtzMsg.VELOCITY and new_state == self.idle:
@@ -233,6 +279,15 @@ class AxisPtz(Node):
             self.control_mode = new_state
 
     def getPtzDesiredPositionFromGoal(self, goal):
+        """
+        Gets the desired PTZ position from the action goal.
+        This method retrieves the desired pan, tilt, and zoom values from the action goal.
+        If the goal specifies relative positions, it adds the current position to the desired position.
+        Args:
+            goal (SetPtz.Goal): The action goal containing the desired PTZ position.
+        Returns:
+            tuple: A tuple containing the desired pan, tilt, and zoom positions.
+        """
         if goal.ptz.relative:
             new_pan = self.ptz.pan.getCurrentPosition() + goal.ptz.pan
             new_tilt = self.ptz.tilt.getCurrentPosition() + goal.ptz.tilt
@@ -279,6 +334,10 @@ class AxisPtz(Node):
         self.command_sent = False
 
     def sendPtzVelocityCommand(self):
+        """
+        Sends the desired velocity command to the PTZ camera.
+        This method sends the current desired velocity of the PTZ camera to the camera.
+        """
         success, msg = self.ptz.sendPtzDesiredVelocityCommand()
         if not success:
             self.get_logger().error(msg)
@@ -292,6 +351,8 @@ class AxisPtz(Node):
         This method sets the control mode to idle and resets the desired velocity.
         """
         self.control_mode = self.idle
+        # Reinit previous velocity to let the user send the previous command again
+        self.previous_velocity = Twist()
         self.setPtzDesiredVelocity(0, 0, 0)
         self.sendPtzVelocityCommand()
     
@@ -308,24 +369,25 @@ class AxisPtz(Node):
 
         # If the camera is being controlled, we cannot set the velocity
         if self.control_mode == PtzMsg.POSITION:
-            self.logger().error(f'Cannot set velocity when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.',
+            self.get_logger().error(f'Cannot set velocity when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.',
                                  throttle_duration_sec = 5.0
                                 )
             return
         
         # If the velocity is zero, we set the control mode to idle
-        if msg.linear.x == 0.0 and msg.linear.y == 0.0 and msg.angular.z == 0.0:
+        if msg.angular.z == 0.0 and msg.angular.y == 0.0 and msg.linear.x == 0.0:
             self.previous_velocity = msg
             self.switchToControlState(self.idle)
             return
         
         # If the velocity is the same as the previous one, we do not send the command
-        if msg == self.previous_velocity:
+        if msg == self.previous_velocity and self.control_mode == PtzMsg.VELOCITY:
             return
         
         # If the velocity is different, we set the control mode to velocity and send the command
         self.previous_velocity = msg
-        self.setPtzDesiredVelocity(msg.linear.x, msg.linear.y, msg.angular.z)
+        self.setPtzDesiredVelocity(msg.angular.z, msg.angular.y, msg.linear.x)
+        self.switchToControlState(PtzMsg.VELOCITY)
 
     def stopVelocityControlCb(self, request : Trigger.Request, response : Trigger.Response):
         """
@@ -341,8 +403,7 @@ class AxisPtz(Node):
         Returns:
             Trigger.Response: The response indicating success or failure.
         """
-        # Reinit previous velocity to avoid sending the same command again
-        self.previous_velocity = Twist()
+
         self.switchToControlState(self.idle)
         response.success = True
         response.message = 'Velocity control stopped successfully'
@@ -396,12 +457,12 @@ class AxisPtz(Node):
         ]
 
         axis_status_raw_msg = Axis()
-        axis_status_raw_msg.pan = self.ptz.pan.getRawCurrentPosition()
-        axis_status_raw_msg.tilt = self.ptz.tilt.getRawCurrentPosition()
-        axis_status_raw_msg.zoom = self.ptz.zoom.getRawCurrentPosition()
-        axis_status_raw_msg.iris = self.ptz.iris
+        axis_status_raw_msg.pan = float(self.ptz.pan.getRawCurrentPosition())
+        axis_status_raw_msg.tilt = float(self.ptz.tilt.getRawCurrentPosition())
+        axis_status_raw_msg.zoom = float(self.ptz.zoom.getRawCurrentPosition())
+        axis_status_raw_msg.iris = float(self.ptz.iris)
         axis_status_raw_msg.autoiris = self.ptz.autoiris
-        axis_status_raw_msg.focus = self.ptz.focus
+        axis_status_raw_msg.focus = float(self.ptz.focus)
         axis_status_raw_msg.autofocus = self.ptz.autofocus
 
         axis_status_msg = deepcopy(axis_status_raw_msg)
@@ -423,6 +484,7 @@ class AxisPtz(Node):
             return GoalResponse.ACCEPT
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
+        """ Callback for accepting the SetPtz action goal. """
         pan, tilt, zoom = self.getPtzDesiredPositionFromGoal(goal_handle.request)
         self.handleGoal(goal_handle, pan, tilt, zoom)
 
@@ -435,20 +497,29 @@ class AxisPtz(Node):
     def homeCb(self, goal_handle : ServerGoalHandle):
         """ Callback for the Home action. """
         self.handleGoal(goal_handle, 0.0, 0.0, 0.0)
-
-    def cancelHomeCb(self, goal_handle : ServerGoalHandle):
-        """ Callback for cancelling the Home action. """
-        self.handleCancel()
-        self.get_logger().info('Cancelling Home action')
-        return CancelResponse.ACCEPT
     
     def handleGoal(self, goal_handle : ServerGoalHandle, pan, tilt, zoom):
+        """
+        Handles the received goal for the PTZ action.
+        This method sets the desired position for the PTZ camera based on the goal
+        and updates the last command received time.
+        Args:
+            goal_handle (ServerGoalHandle): The handle for the goal.
+            pan (float): The desired pan position.
+            tilt (float): The desired tilt position.
+            zoom (float): The desired zoom position.
+        """
         self.time_last_command_received = self.get_clock().now()
         self.current_goal = goal_handle
         self.setPtzDesiredPosition(pan, tilt, zoom)
         self.current_goal.execute()
 
     def handleCancel(self):
+        """
+        Handles the cancellation of the current PTZ action.
+        This method sets the control mode to idle, resets the desired position,
+        and updates the action result to indicate that the action was cancelled.
+        """
         self.current_goal = None
         self.switchToControlState(self.idle)
         self.action_result.response.success = False
@@ -490,6 +561,13 @@ class AxisPtz(Node):
         return self.action_result
 
     def publishFeedback(self, goal_handle: ServerGoalHandle):
+        """
+        Publishes feedback for the current goal.
+        This method sends feedback about the remaining pan, tilt, and zoom positions
+        to the action server.
+        Args:
+            goal_handle (ServerGoalHandle): The handle for the current goal.
+        """
         if goal_handle is None:
             return
         
