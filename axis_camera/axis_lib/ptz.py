@@ -39,8 +39,8 @@ class Ptz:
     def __init__(self, hostname : str, camera_id : int, pan : Joint, tilt : Joint, zoom : ZoomJoint, connection_timeout = 1000):
         self.controller = ControlAxis(hostname, camera_id, connection_timeout)
         info = self.controller.getPTZInfo()
-        if info["error_reading"]:
-            raise Exception("Error reading PTZ info: %s" % info["error_reading_msg"])
+        if info["error"]:
+            raise Exception("Error reading PTZ info: %s" % info["error_msg"])
         self.hostname = hostname
         self.pan = pan
         self.tilt = tilt
@@ -57,10 +57,10 @@ class Ptz:
         """
         Returns True if the camera is currently moving.
         """
-        ptz_read = self.controller.getPTZStatus()
-        if ptz_read["error_reading"]:
+        status = self.controller.getPTZStatus()
+        if status["error"]:
             return False
-        return not (ptz_read["moving"] == 'no')
+        return not (status["moving"] == 'no')
 
     def hasVelocityControl(self):
         """
@@ -71,8 +71,8 @@ class Ptz:
     def updatePtzPosition(self):
         """ Updates the PTZ position with new values. """
         # First time saves the current values
-        ptz_read = self.controller.getPTZState()
-        if not ptz_read["error_reading"]:
+        ptz_read = self.controller.getPTZPosition()
+        if not ptz_read["error"]:
             self.pan.updatePosition(ptz_read["pan"])
             self.tilt.updatePosition(ptz_read["tilt"])
             self.zoom.updatePosition(ptz_read["zoom"])
@@ -85,7 +85,7 @@ class Ptz:
                 self.setCurrentPtzPositionAsDesired()
                 self._is_syncronized = True
         
-        return ptz_read["error_reading"], ptz_read["error_reading_msg"]
+        return ptz_read["error"], ptz_read["error_msg"]
     
     def isSyncronized(self):
         """ Checks if the PTZ state is synchronized. """
@@ -155,10 +155,10 @@ class Ptz:
             self.zoom._real_desired_position
         )
 
-        if control['status'] != 204 and not control['exception']:
+        if control['status'] != 204 and not control['error']:
             msg = 'sendPTZCommand: Error getting response. url = %s%s'% (self.hostname, control['url'])
             return False, msg
-        elif control['exception']:
+        elif control['error']:
             msg = 'sendPTZCommand: Exception connecting to the camera: %s '% (control['error_msg'])
             return False, msg
         else:
@@ -182,10 +182,10 @@ class Ptz:
             self.zoom.getDesiredVelocity()
         )
 
-        if control['status'] != 204 and not control['exception']:
+        if control['status'] != 204 and not control['error']:
             msg = 'sendPtzVelocityCommand: Error getting response. url = %s%s'% (self.hostname, control['url'])
             return False, msg
-        elif control['exception']:
+        elif control['error']:
             msg = 'sendPtzVelocityCommand: Exception connecting to the camera: %s '% (control['error_msg'])
             return False, msg
         else:

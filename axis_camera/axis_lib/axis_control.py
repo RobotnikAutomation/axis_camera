@@ -17,110 +17,132 @@ class ControlAxis():
         self.camera_id = camera_id
         self.timeout = timeout
 
-    # TODO: Handle when connection is not available
+    # TODO: Handle when connection is not available. Added timeout
+
+    def queryPTZ(self, query : dict):
+        """
+            Queries the PTZ camera with the given query parameters.
+            Returns a dictionary with the status and parameters.
+        """
+        params = {}
+        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
+        try:
+            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_id, urllib_parse.urlencode(query))
+            conn.request("GET", url)
+            response = conn.getresponse()
+            params["status"] = response.status
+            params["url"] = url
+            if response.status == 200:
+                body = response.read()
+                body_lines = body.splitlines()
+                for line in body_lines:
+                    try:
+                        decoded_line = line.split('=', 2)
+                    except:
+                        decoded_line = line.decode().split('=', 2)
+                    if len(decoded_line) == 2:
+                        params[decoded_line[0].strip()] = decoded_line[1].strip()
+
+            params["error"] = False
+            params["error_msg"] = ''
+
+        except socket.timeout as e:
+            params["error"]= True
+            params["error_msg"] = e
+        except socket.error as e:
+            params["error"]= True
+            params["error_msg"] = e
+        except ValueError as e:
+            params["error"]= True
+            params["error_msg"] = e
+        except Exception as e:
+            params["error"]= True
+            params["error_msg"] = e
+
+        return params
 
     def getPTZStatus(self):
-        params = {}
-        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
-        query = { 'query':'status' }
-        try:
-            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(query))
-            response = conn.getresponse()
-            if response.status == 200:
-                body = response.read()
-                body_lines = body.splitlines()
-                for line in body_lines:
-                    try:
-                        decoded_line = line.split('=', 2)
-                    except:
-                        decoded_line = line.decode().split('=', 2)
-                    if len(decoded_line) == 2:
-                        params[decoded_line[0].strip()] = decoded_line[1].strip()
+        """
+            Gets the current status of the PTZ camera.
+            Returns a dictionary with the status parameters.
+        """
+        return self.queryPTZ({'query' : 'status'})
 
-            params["error_reading"] = False
-            params["error_reading_msg"] = ''
+    def getPTZPosition(self):
+        """
+            Gets the current position of the PTZ camera.
+            Returns a dictionary with the position parameters.
+        """
+        reponse = self.queryPTZ({'query' : 'position'})
+        if reponse["error"]:
+            return reponse
 
-        except socket.timeout as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-        except socket.error as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-        except ValueError as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-        except Exception as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
+        pan = math.radians(float(reponse['pan']))
+        tilt = math.radians(float(reponse['tilt']))
 
-        return params
+        if 'zoom' in reponse:
+            zoom = float(reponse['zoom'])
+        else:
+            zoom = 0.0
+        # Optional params (depending on model)
+        if 'iris' in reponse:
+            iris = float(reponse['iris'])
+        else:
+            iris = 0.0
+        if 'focus' in reponse:
+            focus = float(reponse['focus'])
+        else:
+            focus = 0.0
+        if 'autofocus' in reponse:
+            autofocus = (reponse['autofocus'] == 'on')
+        else:
+            autofocus = False
+        if 'autoiris' in reponse:
+            autoiris = (reponse['autoiris'] == 'on')
+        else:
+            autoiris = False
 
-    def getPTZInfo(self):
-        params = {}
-        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
-        query = { 'info':'' }
-        try:
-            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(query))
-            response = conn.getresponse()
-            if response.status == 200:
-                body = response.read()
-                body_lines = body.splitlines()
-                for line in body_lines:
-                    try:
-                        decoded_line = line.split('=', 2)
-                    except:
-                        decoded_line = line.decode().split('=', 2)
-                    if len(decoded_line) == 2:
-                        params[decoded_line[0].strip()] = decoded_line[1].strip()
-
-            params["error_reading"] = False
-            params["error_reading_msg"] = ''
-
-        except socket.timeout as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-        except socket.error as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-        except ValueError as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-        except Exception as e:
-            params["error_reading"]= True
-            params["error_reading_msg"] = e
-
-        return params
-
-    def sendPTZCommand(self, pan, tilt, zoom):
-        ret = {
-            'exception': False,
-            'error_msg': '',
-            'status': 0
+        ptz_read = {
+            "pan" : pan,
+            "tilt" : tilt,
+            "zoom" : zoom,
+            "focus" : focus,
+            "autofocus" : autofocus,
+            "iris" : iris,
+            "autoiris" : autoiris,
+            "error" : False,
+            "error_msg" : ''
         }
 
-        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
+        return ptz_read
+
+    def getPTZInfo(self):
+        """
+            Gets the PTZ information of the camera.
+            Returns a dictionary with the PTZ information parameters.
+        """
+        return self.queryPTZ({'info' : ''})
+
+    def sendPTZCommand(self, pan, tilt, zoom):
+        """
+            Sends the PTZ command to the camera.
+            pan and tilt are in radians, zoom is a float value.
+        """
+        ret = {}
+
         params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
-        
-        try:		   
-            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_id, urllib_parse.urlencode(params))
+        response = self.queryPTZ(params)
 
-            conn.request("GET", url)
-            ret['status'] = conn.getresponse().status
-            ret['url'] = url
-
-        except socket.timeout as e:
-            ret['exception'] = True
-            ret['error_msg'] = e
-        except socket.error as e:
-            ret['exception'] = True
-            ret['error_msg'] = e
-        
+        ret['status'] = response['status']
+        ret['url'] = response['url']
+        ret['error'] = response['error']
+        ret['error_msg'] = response['error_msg']
         return ret
 
     def sendPTZVelocityCommand(self, pan, tilt, zoom):
         """
             Sends the PTZ velocity command to the camera.
-            pan, tilt and zoom are in radians
+            pan and tilt are in radians, zoom is a float value.
         """
 
         """
@@ -142,94 +164,13 @@ class ControlAxis():
             "value=100|speed=150"
         )
         """
-        ret = {
-            'exception': False,
-            'error_msg': '',
-            'status': 0
-        }
+        ret = {}
 
-        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
         params = { 'continuouspantiltmove': f'{pan},{tilt}', 'continuouszoommove': zoom }
+        response = self.queryPTZ(params)
 
-        try:
-            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_id, urllib_parse.urlencode(params))
-
-            conn.request("GET", url)
-            ret['status'] = conn.getresponse().status
-            ret['url'] = url
-
-        except socket.timeout as e:
-            ret['exception'] = True
-            ret['error_msg'] = e
-        except socket.error as e:
-            ret['exception'] = True
-            ret['error_msg'] = e
-
+        ret['status'] = response['status']
+        ret['url'] = response['url']
+        ret['error'] = response['error']
+        ret['error_msg'] = response['error_msg']
         return ret
-
-    def getPTZState(self):
-        """
-            Gets the current ptz state/position of the camera
-        """
-        ptz_read = {}
-        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
-        params = { 'query':'position' }
-        try:
-            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(params))
-            response = conn.getresponse()
-            if response.status == 200:
-                body = response.read()
-                try:
-                    params = dict([s.split('=',2) for s in body.splitlines()])
-                except:
-                    params = dict([s.decode().split('=',2) for s in body.splitlines()])
-                pan = math.radians(float(params['pan']))
-                tilt = math.radians(float(params['tilt']))
-                
-                if 'zoom' in params:
-                    zoom = float(params['zoom'])
-                else:
-                    zoom = 0.0
-                # Optional params (depending on model)
-                if 'iris' in params:
-                    iris = float(params['iris'])
-                else:
-                    iris = 0.0
-                if 'focus' in params:
-                    focus = float(params['focus'])
-                else:
-                    focus = 0.0
-                if 'autofocus' in params:
-                    autofocus = (params['autofocus'] == 'on')
-                else:
-                    autofocus = False
-                if 'autoiris' in params:
-                    autoiris = (params['autoiris'] == 'on')
-                else:
-                    autoiris = False
-
-                ptz_read = {
-                    "pan" : pan,
-                    "tilt" : tilt,
-                    "zoom" : zoom,
-                    "focus" : focus,
-                    "autofocus" : autofocus,
-                    "iris" : iris,
-                    "autoiris" : autoiris,
-                    "error_reading" : False,
-                    "error_reading_msg" : ''
-                }    
-
-        except socket.timeout as e:
-            ptz_read["error_reading"]= True
-            ptz_read["error_reading_msg"] = e         
-        except socket.error as e:
-            ptz_read["error_reading"]= True
-            ptz_read["error_reading_msg"] = e
-        except ValueError as e:
-            ptz_read["error_reading"]= True
-            ptz_read["error_reading_msg"] = e
-        
-        return ptz_read
-
-        

@@ -47,7 +47,6 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from axis_camera.axis_lib.ptz import Ptz
 from axis_camera.axis_lib.joints import Joint, ZoomJoint
 
-from robotnik_actuators_msgs.msg import Ptz as PtzMsg
 from robotnik_actuators_msgs.action import SetPtz
 from robotnik_sensors_msgs.msg import Axis
 from sensor_msgs.msg import JointState
