@@ -36,8 +36,11 @@ from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.axis_lib.joints import Joint, ZoomJoint
 
 class Ptz:
-    def __init__(self, hostname : str, camera_id : int, pan : Joint, tilt : Joint, zoom : ZoomJoint):
-        self.controller = ControlAxis(hostname, camera_id)
+    def __init__(self, hostname : str, camera_id : int, pan : Joint, tilt : Joint, zoom : ZoomJoint, connection_timeout = 1000):
+        self.controller = ControlAxis(hostname, camera_id, connection_timeout)
+        info = self.controller.getPTZInfo()
+        if info["error_reading"]:
+            raise Exception("Error reading PTZ info: %s" % info["error_reading_msg"])
         self.hostname = hostname
         self.pan = pan
         self.tilt = tilt
@@ -47,10 +50,24 @@ class Ptz:
         self.focus = -1
         self.autofocus = False
         self._is_syncronized = False
-        info = self.controller.getPTZInfo()
         self._pan_tilt_velocity_control = "continuouspantiltmove" in info.keys()
         self._zoom_velocity_control = "continuouszoommove" in info.keys()
     
+    def isMoving(self):
+        """
+        Returns True if the camera is currently moving.
+        """
+        ptz_read = self.controller.getPTZStatus()
+        if ptz_read["error_reading"]:
+            return False
+        return not (ptz_read["moving"] == 'no')
+
+    def hasVelocityControl(self):
+        """
+        Returns True if the camera supports velocity control for pan/tilt and zoom.
+        """
+        return self._pan_tilt_velocity_control
+
     def updatePtzPosition(self):
         """ Updates the PTZ position with new values. """
         # First time saves the current values
@@ -155,8 +172,10 @@ class Ptz:
         )
 
     def sendPtzVelocityCommand(self, pan = 0, tilt = 0, zoom = 0):
-        self.setDesiredVelocity(pan, tilt, zoom)
+        if not (self._pan_tilt_velocity_control or self._zoom_velocity_control):
+            return False, 'PTZ velocity control is not supported by the camera.'
 
+        self.setDesiredVelocity(pan, tilt, zoom)
         control = self.controller.sendPTZVelocityCommand(
             self.pan.getDesiredVelocity(),
             self.tilt.getDesiredVelocity(),
