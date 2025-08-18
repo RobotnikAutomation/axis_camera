@@ -287,7 +287,7 @@ class AxisPtz(Node):
         if goal.ptz.relative:
             new_pan = self.ptz.pan.getCurrentPosition() + goal.ptz.pan
             new_tilt = self.ptz.tilt.getCurrentPosition() + goal.ptz.tilt
-            new_zoom = round(self.ptz.zoom.getNormalizedPosition()+ goal.ptz.zoom)
+            new_zoom = round(self.ptz.zoom.getNormalizedPosition() + goal.ptz.zoom)
         else:
             new_pan = goal.ptz.pan
             new_tilt = goal.ptz.tilt

@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+
+# Software License Agreement (BSD License)
+#
+# Copyright (c) 2014, Robotnik Automation SLL
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+#
+#  * Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+#  * Redistributions in binary form must reproduce the above
+#    copyright notice, this list of conditions and the following
+#    disclaimer in the documentation and/or other materials provided
+#    with the distribution.
+#  * Neither the name of Robotnik Automation SSL nor the names of its
+#    contributors may be used to endorse or promote products derived
+#    from this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+# FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+# COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+# INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+# BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+# ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+# POSSIBILITY OF SUCH DAMAGE.
+
+import rclpy
+import rclpy.time
+import time
+from rclpy.node import Node
+
+from axis_camera.axis_lib.axis_stream import StreamAxis
+from camera_info_manager import CameraInfoManager, genCameraName
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage
+
+class AxisStream(Node):
+    """ 
+        Class to handle the stream from the Axis camera. 
+        It reads the stream and publishes the images to a topic.
+    """
+    def __init__(self):
+        super().__init__('axis_stream_node')
+
+        self.rosReadParams()
+        self.streamer = StreamAxis({
+            'enable_auth': self.enable_auth,
+            'hostname': self.hostname,
+            'username': self.username,
+            'password': self.password,
+            'camera_number': self.camera_number,
+            'fps': self.fps,
+            'compression': self.compression,
+            'profile': self.profile,
+            'timeout': self.timeout,
+            'videocodec': self.videocodec
+        })
+
+        self.url = self.streamer.getUrl()
+        self.run_camera = False
+        self.last_update_time = self.get_clock().now()
+        self.get_logger().info(f"Axis camera stream URL: {self.url}")
+
+        self.rosSetup()
+        if self.initialization_delay > 0:
+            self.get_logger().info("__init__:: Waiting for initialization delay of %.3lf seconds" % self.initialization_delay)
+            self.get_clock().sleep_for(rclpy.duration.Duration(seconds=self.initialization_delay))
+
+        self.create_timer(1/self.desired_freq, self.controlLoop)
+
+    def readParam(self, param_name, default_value):
+        """ Reads a parameter value from the node's parameters. """
+        self.declare_parameter(param_name, default_value)
+        return self.getParameterValue(self.get_parameter(param_name).get_parameter_value())
+
+    def getParameterValue(self, parameter_value):
+        """
+        Converts the parameter value to its corresponding Python type.
+        Args:
+            parameter_value (rclpy.ParameterValue): The value of the parameter.
+        Returns:
+            The value of the parameter converted to its corresponding Python type.
+        """
+        param = None
+        if rclpy.Parameter.Type.BOOL.value == parameter_value.type:
+            param = parameter_value.bool_value
+        elif rclpy.Parameter.Type.INTEGER.value == parameter_value.type:
+            param = parameter_value.integer_value
+        elif rclpy.Parameter.Type.DOUBLE.value == parameter_value.type:
+            param = parameter_value.double_value
+        elif rclpy.Parameter.Type.STRING.value == parameter_value.type:
+            param = parameter_value.string_value
+        elif rclpy.Parameter.Type.BYTE_ARRAY.value == parameter_value.type:
+            param = parameter_value.byte_array_value
+        elif rclpy.Parameter.Type.BOOL_ARRAY.value == parameter_value.type:
+            param = parameter_value.bool_array_value
+        elif rclpy.Parameter.Type.INTEGER_ARRAY.value == parameter_value.type:
+            param = parameter_value.integer_array_value
+        elif rclpy.Parameter.Type.DOUBLE_ARRAY.value == parameter_value.type:
+            param = parameter_value.double_array_value
+        elif rclpy.Parameter.Type.STRING_ARRAY.value == parameter_value.type:
+            param = parameter_value.string_array_value
+        return param
+
+    def rosReadParams(self):
+        self.hostname = self.readParam('hostname', '192.168.0.185')
+        self.enable_auth = self.readParam('enable_auth', True)
+        self.username = self.readParam('username', 'root')
+        self.password = self.readParam('password', 'R0b0tn1K')
+        self.camera_number = self.readParam('camera_number', 1)
+        self.camera_id = self.readParam('camera_id', 'XXXX')
+        self.camera_model = self.readParam('camera_model', 'axis_p5512')
+        self.camera_info_url = self.readParam('camera_info_url', 'package://axis_camera/data/default_calibration.yaml')
+        self.fps = self.readParam('fps', 0)
+        self.compression = self.readParam('compression', 0)
+        self.axis_frame_id = self.readParam('axis_frame_id', 'axis_camera')
+        self.profile = self.readParam('profile', 'Test')
+        self.timeout = self.readParam('timeout', 5)
+        self.videocodec = self.readParam('videocodec', 'mpeg4')
+        self.initialization_delay = self.readParam('initialization_delay', 0.0)
+        self.reconnection_time = self.readParam('reconnection_time', 5.0)
+        self.desired_freq = self.readParam('desired_freq', 30.0)
+
+    def rosSetup(self):
+        """
+        Sets up the ROS node, including subscribers and publishers.
+        This method is called after the parameters are read.
+        """
+        self.camera_info = CameraInfoManager(self, cname = genCameraName(self.hostname), url = self.camera_info_url, namespace='/axis_stream')
+        self.camera_info.loadCameraInfo()
+        self.image_publisher = self.create_publisher(Image, '~/image_raw', 10)
+        self.compressed_image_publisher = self.create_publisher(CompressedImage, '~/image_raw/compressed', 10)
+        self.camera_info_publisher = self.create_publisher(CameraInfo, '~/camera_info', 10)
+
+    def controlLoop(self):
+        """
+        Executes the control loop for the camera stream.
+        """
+        self.checkSubscriberCount()
+        try:
+            if self.run_camera:
+                self.stream()
+
+        except Exception as e:
+            self.get_logger().error(f"controlLoop:: Error in Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {e}")
+            if rclpy.ok():
+                self.get_clock().sleep_for(rclpy.duration.Duration(seconds=self.reconnection_time))
+
+    def stream(self):
+        error, error_msg = self.streamer.stream()
+        if error:
+            self.get_logger().error(f"stream:: Error streaming from Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {error_msg}")
+            return
+        else:
+            self.publishCamera()
+
+    def publishCamera(self):
+        image = self.streamer.getImage()
+
+        msg = Image()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.axis_frame_id
+        msg.data = image
+        
+        compressed_msg = CompressedImage()
+        compressed_msg.header.stamp = msg.header.stamp
+        compressed_msg.header.frame_id = msg.header.frame_id
+        compressed_msg.format = 'jpeg'
+        compressed_msg.data = image
+
+        camera_info_msg = self.camera_info.getCameraInfo()
+        camera_info_msg.header.stamp = msg.header.stamp
+        camera_info_msg.header.frame_id = msg.header.frame_id
+
+        self.image_publisher.publish(msg)
+        self.compressed_image_publisher.publish(compressed_msg)
+        self.camera_info_publisher.publish(camera_info_msg)
+
+        self.last_update_time = self.get_clock().now()
+
+    def checkSubscriberCount(self):
+        """
+        Checks the number of subscribers to the image topic.
+        If there are subscribers, it starts the camera stream.
+        If there are no subscribers, it stops the camera stream.
+        """
+        current_subscriber_count = self.image_publisher.get_subscription_count()
+        current_subscriber_count += self.compressed_image_publisher.get_subscription_count()
+        current_subscriber_count += self.camera_info_publisher.get_subscription_count()
+        if current_subscriber_count > 0:
+            if not self.run_camera:
+                self.get_logger().info("checkSubscriberCount:: Starting camera stream")
+                self.run_camera = True
+        else:
+            if self.run_camera:
+                self.get_logger().info("checkSubscriberCount:: Stopping camera stream")
+                self.run_camera = False

@@ -33,36 +33,14 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 import rclpy
-from rclpy.executors import MultiThreadedExecutor
 
 from axis_camera.axis_stream import AxisStream
 
 def main(args=None):
     rclpy.init()
 
-    # parameters = {
-    #    'hostname': '192.168.0.90',        # default IP address
-    #    'http_port': 80,                   # default HTTP port
-    #    'username': 'root',                # default login name
-    #    'password': '',
-    #    'width': 640,                      # frame width (pixels)
-    #    'height': 480,                     # frame height (pixels)
-    #    'fps': 20,                         # frames per second (0 = camera default)
-    #    'tf_prefix': 'axis',               # sensor & joint frame prefix
-    #    'camera_info_url': '',
-    #    'use_encrypted_password' : False,
-    #    'camera' : 1,
-    #    'ir': False,
-    #    'defog': False,
-    #    'wiper': False,
-    #    'ptz': False }
-
-    # args = updateArgs(parameters)
-
-    node_name = 'axis_stream_node'
-    executor = MultiThreadedExecutor()
-    axis_camera_node = AxisStream(node_name)
-    rclpy.spin(axis_camera_node, executor=executor)
+    axis_camera_node = AxisStream()
+    rclpy.spin(axis_camera_node)
 
     # Destroy the node explicitly
     # (optional - otherwise it will be done automatically

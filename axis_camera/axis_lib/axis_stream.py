@@ -17,6 +17,12 @@ class StreamAxis():
         self.fps = args['fps']
         self.compression = args['compression']
         self.profile = args['profile']
+        if 'timeout' not in args.keys():
+            args['timeout'] = 5
+        self.timeout = args['timeout']
+        if 'videocodec' not in args.keys():
+            args['videocodec'] = 'mpeg4'
+        self.videocodec = args['videocodec'] # h264, mpeg4
 
         self._url = 'http://%s/axis-cgi/mjpg/video.cgi?streamprofile=%s&camera=%d&fps=%d&compression=%d' % (
             self.hostname, self.profile, self.camera_number, self.fps, self.compression)
@@ -25,11 +31,6 @@ class StreamAxis():
         except:
             encodedstring = base64.encodebytes((self.username + ":" + str(self.password)).encode())[:-1]
         self.auth = "Basic %s" % encodedstring
-
-        # timeout when calling urlopen
-        self.timeout = 5
-    
-        self.videocodec = 'mpeg4'  # h264, mpeg4        
 
     def getUrl(self):
         return self._url
@@ -54,8 +55,8 @@ class StreamAxis():
         """
                 Reads and process the streams from the camera
         """
-        error_reading = False
-        error_reading_msg = ''
+        error = False
+        error_msg = ''
         try:
             # If flag self.enable_auth is 'True' then use the user/password to access the camera. Otherwise use only self.url
             try:
@@ -69,19 +70,19 @@ class StreamAxis():
                 req = urllib_request.Request(self._url)
                 if self.enable_auth:
                     self.authenticate()
-                self.fp = urllib_request.urlopen(req)
+                self.fp = urllib_request.urlopen(req, timeout=self.timeout)
     
         except urllib_error.HTTPError as e:
-            error_reading = True
-            error_reading_msg = e
+            error = True
+            error_msg = e
         except urllib_error.URLError as e:
-            error_reading = True
-            error_reading_msg = e
+            error = True
+            error_msg = e
         except socket.timeout as e:
-            error_reading = True
-            error_reading_msg = e
+            error = True
+            error_msg = e
 
-        return error_reading, error_reading_msg
+        return error, error_msg
 
     def getImage(self):
         boundary = self.readLine()
