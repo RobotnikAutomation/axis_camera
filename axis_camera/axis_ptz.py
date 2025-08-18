@@ -59,6 +59,9 @@ class AxisPtz(Node):
     """
       Provides interfaces for controlling PTZ of supported Axis cameras. 
     """
+    IDLE = "idle"
+    POSITION = "position"
+    VELOCITY = "velocity"
 
     def __init__(self):
         super().__init__('axis_ptz_node')
@@ -69,8 +72,7 @@ class AxisPtz(Node):
         self.run_control = True
         self.action_result = SetPtz.Result()
         self.command_sent = False
-        self.idle = "idle"
-        self.control_mode = self.idle
+        self.control_mode = self.IDLE
         self.previous_velocity = Twist()
 
         # Timer to get/release ptz control
@@ -223,11 +225,11 @@ class AxisPtz(Node):
 
         # If the camera is not moving and the control mode is not idle, we set control mode to idle
         if self.last_time_moving and \
-            self.control_mode != self.idle and \
+            self.control_mode != self.IDLE and \
             (self.get_clock().now() - self.last_time_moving > self.camera_not_moving_timeout):
 
             self.get_logger().info(f'PTZ camera is not moving, switching to idle mode')
-            self.switchToControlState(self.idle)
+            self.switchToControlState(self.IDLE)
             self.last_time_moving = None
 
     def controlLoop(self):
@@ -241,9 +243,9 @@ class AxisPtz(Node):
         rate = self.create_rate(self.desired_freq)
         while rclpy.ok():
             if self.ptz.isSyncronized() and (self.send_constantly or not self.command_sent):
-                if self.control_mode == PtzMsg.POSITION:
+                if self.control_mode == self.POSITION:
                     self.sendPtzCommand()
-                elif self.control_mode == PtzMsg.VELOCITY:
+                elif self.control_mode == self.VELOCITY:
                     self.sendPtzVelocityCommand()
 
             self.handlePtzStoppedMoving()
@@ -266,14 +268,14 @@ class AxisPtz(Node):
         if self.control_mode == new_state:
             return
         
-        if self.idle not in [new_state, self.control_mode]:
+        if self.IDLE not in [new_state, self.control_mode]:
             self.get_logger().error(f'Cannot switch to {new_state} control mode from {self.control_mode} mode. Please, stop current control first.')
             return
         
         self.get_logger().info(f'Switching control mode from {self.control_mode} to {new_state}')
-        if self.control_mode == PtzMsg.POSITION and new_state == self.idle:
+        if self.control_mode == self.POSITION and new_state == self.IDLE:
             self.switchFromPositionToIdle()
-        elif self.control_mode == PtzMsg.VELOCITY and new_state == self.idle:
+        elif self.control_mode == self.VELOCITY and new_state == self.IDLE:
             self.switchFromVelocityToIdle()
         else:
             self.control_mode = new_state
@@ -350,7 +352,7 @@ class AxisPtz(Node):
 
         This method sets the control mode to idle and resets the desired velocity.
         """
-        self.control_mode = self.idle
+        self.control_mode = self.IDLE
         # Reinit previous velocity to let the user send the previous command again
         self.previous_velocity = Twist()
         self.setPtzDesiredVelocity(0, 0, 0)
@@ -368,7 +370,7 @@ class AxisPtz(Node):
         """
 
         # If the camera is being controlled, we cannot set the velocity
-        if self.control_mode == PtzMsg.POSITION:
+        if self.control_mode == self.POSITION:
             self.get_logger().error(f'Cannot set velocity when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.',
                                  throttle_duration_sec = 5.0
                                 )
@@ -377,17 +379,17 @@ class AxisPtz(Node):
         # If the velocity is zero, we set the control mode to idle
         if msg.angular.z == 0.0 and msg.angular.y == 0.0 and msg.linear.x == 0.0:
             self.previous_velocity = msg
-            self.switchToControlState(self.idle)
+            self.switchToControlState(self.IDLE)
             return
         
         # If the velocity is the same as the previous one, we do not send the command
-        if msg == self.previous_velocity and self.control_mode == PtzMsg.VELOCITY:
+        if msg == self.previous_velocity and self.control_mode == self.VELOCITY:
             return
         
         # If the velocity is different, we set the control mode to velocity and send the command
         self.previous_velocity = msg
         self.setPtzDesiredVelocity(msg.angular.z, msg.angular.y, msg.linear.x)
-        self.switchToControlState(PtzMsg.VELOCITY)
+        self.switchToControlState(self.VELOCITY)
 
     def stopVelocityControlCb(self, request : Trigger.Request, response : Trigger.Response):
         """
@@ -404,7 +406,7 @@ class AxisPtz(Node):
             Trigger.Response: The response indicating success or failure.
         """
 
-        self.switchToControlState(self.idle)
+        self.switchToControlState(self.IDLE)
         response.success = True
         response.message = 'Velocity control stopped successfully'
         return response
@@ -415,7 +417,7 @@ class AxisPtz(Node):
 
         This method sets the control mode to idle and resets the desired position.
         """
-        self.control_mode = self.idle
+        self.control_mode = self.IDLE
         self.setPtzDesiredPosition(current_position = True)
         self.sendPtzCommand()
 
@@ -476,11 +478,11 @@ class AxisPtz(Node):
 
     def setPtzGoalCb(self, goal_handle : ServerGoalHandle):
         """ Callback for the SetPtz action. """
-        if self.control_mode != self.idle:
+        if self.control_mode != self.IDLE:
             self.get_logger().error(f'Cannot set a new position goal when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.')
             return GoalResponse.REJECT
         else:
-            self.switchToControlState(PtzMsg.POSITION)
+            self.switchToControlState(self.POSITION)
             return GoalResponse.ACCEPT
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
@@ -521,7 +523,7 @@ class AxisPtz(Node):
         and updates the action result to indicate that the action was cancelled.
         """
         self.current_goal = None
-        self.switchToControlState(self.idle)
+        self.switchToControlState(self.IDLE)
         self.action_result.response.success = False
         self.action_result.response.message = 'PTZ action cancelled'
 
@@ -557,7 +559,7 @@ class AxisPtz(Node):
 
             self.publishFeedback(self.current_goal)
         
-        self.switchToControlState(self.idle)
+        self.switchToControlState(self.IDLE)
         return self.action_result
 
     def publishFeedback(self, goal_handle: ServerGoalHandle):
