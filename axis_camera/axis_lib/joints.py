@@ -162,12 +162,11 @@ class Joint:
         return self._velocity
 
 class ZoomJoint(Joint):
-    def __init__(self, min_position, max_position, joint_name, offset, error, min_augment, max_augment, min_step):
+    def __init__(self, min_position, max_position, joint_name, offset, error, min_augment, max_augment):
         super().__init__(min_position, max_position, joint_name, offset, error, invert = False)
         self._min_augment = min_augment
         self._max_augment = max_augment
         self._total_augment = max_augment - min_augment
-        self._min_step = min_step
     
     def updatePosition(self, position):
         # Position read from the camera
