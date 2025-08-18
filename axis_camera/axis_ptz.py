@@ -74,12 +74,7 @@ class AxisPtz(Node):
         self.control_mode = self.IDLE
         self.previous_velocity = Twist()
 
-        # Timer to get/release ptz control
-        if self.use_control_timeout:
-            self.duration_command_timeout = rclpy.time.Duration(seconds=self.control_timeout_value)
-
         self.time_last_command_received = self.get_clock().now()
-        self.duration_last_command_watchdog = rclpy.time.Duration(seconds=10.0)
         self.last_time_moving = None
 
         self.rosSetup()
@@ -166,10 +161,10 @@ class AxisPtz(Node):
             except Exception as e:
                 self.get_logger().error(f'Error connecting to PTZ camera: {e}')
 
-        self.use_control_timeout = self.readParam('use_control_timeout', False)
-        self.control_timeout_value = self.readParam('control_timeout_value', 0.5)
         camera_not_moving_timeout_value = self.readParam('camera_not_moving_timeout_value', 3.0)
         self.camera_not_moving_timeout = rclpy.time.Duration(seconds=camera_not_moving_timeout_value)
+        duration_last_command_watchdog_value = self.readParam('duration_last_command_watchdog_value', 10.0)
+        self.duration_last_command_watchdog = rclpy.time.Duration(seconds=duration_last_command_watchdog_value)
         self.send_constantly = self.readParam('send_constantly', False)
 
     def rosSetup(self):
