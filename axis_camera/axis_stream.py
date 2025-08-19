@@ -42,8 +42,8 @@ from camera_info_manager import CameraInfoManager, genCameraName
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 
 class AxisStream(Node):
-    """ 
-        Class to handle the stream from the Axis camera. 
+    """
+        Class to handle the stream from the Axis camera.
         It reads the stream and publishes the images to a topic.
     """
     def __init__(self):
