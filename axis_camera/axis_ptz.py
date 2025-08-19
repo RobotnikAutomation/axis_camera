@@ -596,6 +596,7 @@ class AxisPtz(Node):
         goal_handle.abort()
         self.action_result.response.success = False
         self.action_result.response.message = msg
+        self.get_logger().error(f'Action aborted: {msg}')
         self.switchToControlState(self.IDLE)
 
     def succeedAction(self, goal_handle: ServerGoalHandle, msg: str):
@@ -603,6 +604,7 @@ class AxisPtz(Node):
         goal_handle.succeed()
         self.action_result.response.success = True
         self.action_result.response.message = msg
+        self.get_logger().info(f'Action succeeded: {msg}')
         self.switchToControlState(self.IDLE)
 
     def cancelAction(self, goal_handle: ServerGoalHandle, msg: str):
@@ -610,4 +612,5 @@ class AxisPtz(Node):
         goal_handle.canceled()
         self.action_result.response.success = False
         self.action_result.response.message = msg
+        self.get_logger().info(f'Action cancelled: {msg}')
         self.switchToControlState(self.IDLE)
