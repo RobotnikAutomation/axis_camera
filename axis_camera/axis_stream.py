@@ -34,7 +34,6 @@
 
 import rclpy
 import rclpy.time
-import time
 from rclpy.node import Node
 
 from axis_camera.axis_lib.axis_stream import StreamAxis
