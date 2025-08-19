@@ -492,14 +492,21 @@ class AxisPtz(Node):
                 return GoalResponse.REJECT
             else:
                 self.get_logger().info(f'New goal received, aborting previous goal')
-                self.abortAction(self.current_goal, 'New goal received, aborting previous goal')
+                if self.current_goal is not None and self.current_goal.is_active:
+                    self.abortAction(self.current_goal, 'New goal received, aborting previous goal')
+
+                # Wait until the control mode is idle
+                goal_received_time = self.get_clock().now()
+                while self.control_mode != self.IDLE and rclpy.ok() and \
+                (self.get_clock().now() - goal_received_time < rclpy.time.Duration(seconds=5.0)):
+                    pass
 
                 # If the control mode is idle, accept the goal
                 if self.control_mode == self.IDLE:
                     self.switchToControlState(self.POSITION)
                     return GoalResponse.ACCEPT
                 else:
-                    self.get_logger().error(f'Control mode is not idle for some unknown reason, rejecting goal')
+                    self.get_logger().error(f'Control mode is not idle after 5 seconds for some unknown reason, rejecting goal')
                     return GoalResponse.REJECT   
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
@@ -585,22 +592,22 @@ class AxisPtz(Node):
         goal_handle.publish_feedback(feedback)
 
     def abortAction(self, goal_handle : ServerGoalHandle, msg : str):
-        goal_handle.abort()
         self.current_goal = None
+        goal_handle.abort()
         self.action_result.response.success = False
         self.action_result.response.message = msg
         self.switchToControlState(self.IDLE)
 
     def succeedAction(self, goal_handle: ServerGoalHandle, msg: str):
-        goal_handle.succeed()
         self.current_goal = None
+        goal_handle.succeed()
         self.action_result.response.success = True
         self.action_result.response.message = msg
         self.switchToControlState(self.IDLE)
 
     def cancelAction(self, goal_handle: ServerGoalHandle, msg: str):
-        goal_handle.canceled()
         self.current_goal = None
+        goal_handle.canceled()
         self.action_result.response.success = False
         self.action_result.response.message = msg
         self.switchToControlState(self.IDLE)
