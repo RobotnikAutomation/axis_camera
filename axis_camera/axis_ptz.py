@@ -129,7 +129,7 @@ class AxisPtz(Node):
             self.readParam('pan.max_value', PI), 
             self.readParam('pan.joint', 'axis_pan_joint'),
             self.readParam('pan.offset', 0.0),
-            self.readParam('pan.error_pos', 0.02),
+            self.readParam('pan.error_pos', 0.01),
             invert = self.readParam('pan.invert', False)
         )
         tilt = Joint(
@@ -137,7 +137,7 @@ class AxisPtz(Node):
             self.readParam('tilt.max_value', PI/2),
             self.readParam('tilt.joint', 'axis_tilt_joint'),
             self.readParam('tilt.offset', 0.0),
-            self.readParam('tilt.error_pos', 0.02),
+            self.readParam('tilt.error_pos', 0.01),
             invert = self.readParam('tilt.invert', False)
         )
         zoom = ZoomJoint(
@@ -165,6 +165,7 @@ class AxisPtz(Node):
         self.camera_not_moving_timeout = rclpy.time.Duration(seconds=camera_not_moving_timeout_value)
         duration_last_command_watchdog_value = self.readParam('duration_last_command_watchdog_value', 10.0)
         self.duration_last_command_watchdog = rclpy.time.Duration(seconds=duration_last_command_watchdog_value)
+        self.reject_new_goal = self.readParam('reject_new_goal', False)
 
     def rosSetup(self):
         """
@@ -222,8 +223,15 @@ class AxisPtz(Node):
             (self.get_clock().now() - self.last_time_moving > self.camera_not_moving_timeout):
 
             self.get_logger().info(f'PTZ camera is not moving, switching to idle mode')
-            self.switchToControlState(self.IDLE)
+            if self.current_goal is not None and self.current_goal.is_active:
+                self.abortAction(self.current_goal, 'PTZ camera stopped moving')
             self.last_time_moving = None
+        else:
+            # Try to send the command again while the timeout is not reached
+            if self.control_mode == self.POSITION:
+                self.sendPtzCommand()
+            elif self.control_mode == self.VELOCITY:
+                self.sendPtzVelocityCommand()
 
     def controlLoop(self):
         """
@@ -345,11 +353,11 @@ class AxisPtz(Node):
 
         This method sets the control mode to idle and resets the desired velocity.
         """
-        self.control_mode = self.IDLE
         # Reinit previous velocity to let the user send the previous command again
         self.previous_velocity = Twist()
         self.setPtzDesiredVelocity(0, 0, 0)
         self.sendPtzVelocityCommand()
+        self.control_mode = self.IDLE
     
     def velocityCb(self, msg: Twist):
         """
@@ -410,9 +418,9 @@ class AxisPtz(Node):
 
         This method sets the control mode to idle and resets the desired position.
         """
-        self.control_mode = self.IDLE
         self.setPtzDesiredPosition(current_position = True)
         self.sendPtzCommand()
+        self.control_mode = self.IDLE
 
     def sendPtzCommand(self, pan = None, tilt = None, zoom = None):
         """
@@ -471,12 +479,28 @@ class AxisPtz(Node):
 
     def setPtzGoalCb(self, goal_handle : ServerGoalHandle):
         """ Callback for the SetPtz action. """
-        if self.control_mode != self.IDLE:
+        if self.control_mode == self.VELOCITY:
             self.get_logger().error(f'Cannot set a new position goal when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.')
             return GoalResponse.REJECT
-        else:
+        elif self.control_mode == self.IDLE:
+            self.get_logger().info(f'Accepting new goal.')
             self.switchToControlState(self.POSITION)
             return GoalResponse.ACCEPT
+        else:
+            if self.reject_new_goal:
+                self.get_logger().error(f'Cannot set a new position goal when the camera is being controlled (control_mode = {self.control_mode}). Please, stop current control first.')
+                return GoalResponse.REJECT
+            else:
+                self.get_logger().info(f'New goal received, aborting previous goal')
+                self.abortAction(self.current_goal, 'New goal received, aborting previous goal')
+
+                # If the control mode is idle, accept the goal
+                if self.control_mode == self.IDLE:
+                    self.switchToControlState(self.POSITION)
+                    return GoalResponse.ACCEPT
+                else:
+                    self.get_logger().error(f'Control mode is not idle for some unknown reason, rejecting goal')
+                    return GoalResponse.REJECT   
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
         """ Callback for accepting the SetPtz action goal. """
@@ -485,7 +509,6 @@ class AxisPtz(Node):
 
     def cancelPtzCb(self, goal_handle : ServerGoalHandle):
         """ Callback for cancelling the SetPtz action. """
-        self.handleCancel()
         self.get_logger().info('Cancelling PTZ action')
         return CancelResponse.ACCEPT
     
@@ -505,20 +528,8 @@ class AxisPtz(Node):
             zoom (float): The desired zoom position.
         """
         self.time_last_command_received = self.get_clock().now()
-        self.current_goal = goal_handle
         self.setPtzDesiredPosition(pan, tilt, zoom)
-        self.current_goal.execute()
-
-    def handleCancel(self):
-        """
-        Handles the cancellation of the current PTZ action.
-        This method sets the control mode to idle, resets the desired position,
-        and updates the action result to indicate that the action was cancelled.
-        """
-        self.current_goal = None
-        self.switchToControlState(self.IDLE)
-        self.action_result.response.success = False
-        self.action_result.response.message = 'PTZ action cancelled'
+        goal_handle.execute()
 
     def setPtzExecuteCb(self, goal_handle : ServerGoalHandle):
         """
@@ -533,26 +544,28 @@ class AxisPtz(Node):
         Returns:
             SetPtz.Result: The result of the action execution.
         """
+        self.current_goal = goal_handle
         while self.current_goal is not None and rclpy.ok():
             # If goal has been reached or there is no goal -> control mode is idle
             if self.ptz.isInDesiredPosition():
-                self.current_goal.succeed()
-                self.current_goal = None
-                self.action_result.response.success = True
-                self.action_result.response.message = 'PTZ position reached successfully'
+                self.succeedAction(goal_handle, 'PTZ position reached successfully')
                 break
 
             # If timeout has been reached, abort the goal
             elif self.get_clock().now() - self.time_last_command_received > self.duration_last_command_watchdog:
-                self.current_goal.abort()
-                self.current_goal = None
-                self.action_result.response.success = False
-                self.action_result.response.message = 'PTZ position not reached in time'
+                self.abortAction(goal_handle, 'PTZ position not reached in time')
                 break
 
-            self.publishFeedback(self.current_goal)
-        
-        self.switchToControlState(self.IDLE)
+            elif goal_handle.is_cancel_requested:
+                self.cancelAction(goal_handle, 'PTZ action cancelled by user')
+                break
+
+            self.publishFeedback(goal_handle)
+
+        if goal_handle.status < 4: # Not in [Succeeded, Cancelled, Aborted]
+            self.get_logger().error(f'Exited loop in a bad state: {goal_handle.status}')
+            self.abortAction(goal_handle, f'Exited loop in a bad state: {goal_handle.status}')
+
         return self.action_result
 
     def publishFeedback(self, goal_handle: ServerGoalHandle):
@@ -570,3 +583,24 @@ class AxisPtz(Node):
         feedback.remaining_pan, feedback.remaining_tilt, feedback.remaining_zoom = self.ptz.getRemainingPtzPosition()
 
         goal_handle.publish_feedback(feedback)
+
+    def abortAction(self, goal_handle : ServerGoalHandle, msg : str):
+        goal_handle.abort()
+        self.current_goal = None
+        self.action_result.response.success = False
+        self.action_result.response.message = msg
+        self.switchToControlState(self.IDLE)
+
+    def succeedAction(self, goal_handle: ServerGoalHandle, msg: str):
+        goal_handle.succeed()
+        self.current_goal = None
+        self.action_result.response.success = True
+        self.action_result.response.message = msg
+        self.switchToControlState(self.IDLE)
+
+    def cancelAction(self, goal_handle: ServerGoalHandle, msg: str):
+        goal_handle.canceled()
+        self.current_goal = None
+        self.action_result.response.success = False
+        self.action_result.response.message = msg
+        self.switchToControlState(self.IDLE)
