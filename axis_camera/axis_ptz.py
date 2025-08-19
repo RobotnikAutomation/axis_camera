@@ -612,5 +612,5 @@ class AxisPtz(Node):
         goal_handle.canceled()
         self.action_result.response.success = False
         self.action_result.response.message = msg
-        self.get_logger().info(f'Action cancelled: {msg}')
+        self.get_logger().error(f'Action cancelled: {msg}')
         self.switchToControlState(self.IDLE)
