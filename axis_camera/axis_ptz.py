@@ -165,7 +165,6 @@ class AxisPtz(Node):
         self.camera_not_moving_timeout = rclpy.time.Duration(seconds=camera_not_moving_timeout_value)
         duration_last_command_watchdog_value = self.readParam('duration_last_command_watchdog_value', 10.0)
         self.duration_last_command_watchdog = rclpy.time.Duration(seconds=duration_last_command_watchdog_value)
-        self.send_constantly = self.readParam('send_constantly', False)
 
     def rosSetup(self):
         """
@@ -236,7 +235,7 @@ class AxisPtz(Node):
         """
         rate = self.create_rate(self.desired_freq)
         while rclpy.ok():
-            if self.ptz.isSyncronized() and (self.send_constantly or not self.command_sent):
+            if self.ptz.isSyncronized() and not self.command_sent:
                 if self.control_mode == self.POSITION:
                     self.sendPtzCommand()
                 elif self.control_mode == self.VELOCITY:
