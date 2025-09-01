@@ -378,7 +378,7 @@ class AxisPtz(Node):
             return
         
         # If the velocity is zero, we set the control mode to idle
-        if msg.angular.z == 0.0 and msg.angular.y == 0.0 and msg.linear.x == 0.0:
+        if msg.angular.z == 0.0 and msg.linear.y == 0.0 and msg.linear.x == 0.0:
             self.previous_velocity = msg
             self.switchToControlState(self.IDLE)
             return
@@ -389,7 +389,7 @@ class AxisPtz(Node):
         
         # If the velocity is different, we set the control mode to velocity and send the command
         self.previous_velocity = msg
-        self.setPtzDesiredVelocity(msg.angular.z, msg.angular.y, msg.linear.x)
+        self.setPtzDesiredVelocity(msg.linear.x, msg.linear.y, msg.angular.z)
         self.switchToControlState(self.VELOCITY)
 
     def stopVelocityControlCb(self, request : Trigger.Request, response : Trigger.Response):
