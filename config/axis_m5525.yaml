@@ -1,0 +1,24 @@
+/**:
+  ros__parameters:
+    pan:
+      min_value: -3.14
+      max_value: 3.14
+      joint: "pan_joint"
+      offset: 0.0
+      error_pos: 0.01
+      invert: false
+    tilt:
+      min_value: 0.0
+      max_value: 1.57
+      joint: "tilt_joint"
+      offset: 0.0
+      error_pos: 0.01
+      invert: false
+    zoom:
+      min_value: 1.0
+      max_value: 9999.0
+      joint: "zoom_joint"
+      offset: 0.0
+      error_pos: 99.0
+      min_augment: 0.0
+      max_augment: 30.0
