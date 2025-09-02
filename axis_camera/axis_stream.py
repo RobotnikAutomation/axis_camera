@@ -64,8 +64,10 @@ class AxisStream(Node):
 
         self.url = self.streamer.getUrl()
         self.run_camera = False
-        self.last_update_time = self.get_clock().now()
         self.get_logger().info(f"Axis camera stream URL: {self.url}")
+        self.publish_cam_info = False
+        self.publish_img = False
+        self.publish_compressed_img = False
 
         self.rosSetup()
         if self.initialization_delay > 0:
@@ -115,13 +117,12 @@ class AxisStream(Node):
         self.password = self.readParam('password', 'R0b0tn1K')
         self.camera_number = self.readParam('camera_number', 1)
         self.camera_id = self.readParam('camera_id', 'XXXX')
-        self.camera_model = self.readParam('camera_model', 'axis_p5512')
         self.camera_info_url = self.readParam('camera_info_url', 'package://axis_camera/data/default_calibration.yaml')
         self.fps = self.readParam('fps', 0)
         self.compression = self.readParam('compression', 0)
         self.axis_frame_id = self.readParam('axis_frame_id', 'axis_camera')
         self.profile = self.readParam('profile', 'Test')
-        self.timeout = self.readParam('timeout', 5)
+        self.timeout = self.readParam('timeout', 5.0)
         self.videocodec = self.readParam('videocodec', 'mpeg4')
         self.initialization_delay = self.readParam('initialization_delay', 0.0)
         self.reconnection_time = self.readParam('reconnection_time', 5.0)
@@ -162,27 +163,28 @@ class AxisStream(Node):
 
     def publishCamera(self):
         image = self.streamer.getImage()
+        stamp = self.get_clock().now().to_msg()
 
-        msg = Image()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = self.axis_frame_id
-        msg.data = image
-        
-        compressed_msg = CompressedImage()
-        compressed_msg.header.stamp = msg.header.stamp
-        compressed_msg.header.frame_id = msg.header.frame_id
-        compressed_msg.format = 'jpeg'
-        compressed_msg.data = image
+        if self.publish_img:
+            msg = Image()
+            msg.header.stamp = stamp
+            msg.header.frame_id = self.axis_frame_id
+            msg.data = image
+            self.image_publisher.publish(msg)
 
-        camera_info_msg = self.camera_info.getCameraInfo()
-        camera_info_msg.header.stamp = msg.header.stamp
-        camera_info_msg.header.frame_id = msg.header.frame_id
+        if self.publish_compressed_img:
+            compressed_msg = CompressedImage()
+            compressed_msg.header.stamp =stamp
+            compressed_msg.header.frame_id = self.axis_frame_id
+            compressed_msg.format = 'jpeg'
+            compressed_msg.data = image
+            self.compressed_image_publisher.publish(compressed_msg)
 
-        self.image_publisher.publish(msg)
-        self.compressed_image_publisher.publish(compressed_msg)
-        self.camera_info_publisher.publish(camera_info_msg)
-
-        self.last_update_time = self.get_clock().now()
+        if self.publish_cam_info:
+            camera_info_msg = self.camera_info.getCameraInfo()
+            camera_info_msg.header.stamp = stamp
+            camera_info_msg.header.frame_id = self.axis_frame_id
+            self.camera_info_publisher.publish(camera_info_msg)
 
     def checkSubscriberCount(self):
         """
@@ -190,14 +192,28 @@ class AxisStream(Node):
         If there are subscribers, it starts the camera stream.
         If there are no subscribers, it stops the camera stream.
         """
-        current_subscriber_count = self.image_publisher.get_subscription_count()
-        current_subscriber_count += self.compressed_image_publisher.get_subscription_count()
-        current_subscriber_count += self.camera_info_publisher.get_subscription_count()
-        if current_subscriber_count > 0:
-            if not self.run_camera:
-                self.get_logger().info("checkSubscriberCount:: Starting camera stream")
-                self.run_camera = True
-        else:
-            if self.run_camera:
-                self.get_logger().info("checkSubscriberCount:: Stopping camera stream")
-                self.run_camera = False
+
+        publish_img = self.image_publisher.get_subscription_count() > 0
+        publish_compressed_img = self.compressed_image_publisher.get_subscription_count() > 0
+        publish_cam_info = self.camera_info_publisher.get_subscription_count() > 0
+
+        self.subscriberTransitionLogger(self.publish_img, publish_img, self.image_publisher.topic_name)
+        self.subscriberTransitionLogger(self.publish_compressed_img, publish_compressed_img, self.compressed_image_publisher.topic_name)
+        self.subscriberTransitionLogger(self.publish_cam_info, publish_cam_info, self.camera_info_publisher.topic_name)
+
+        run_camera = publish_cam_info or publish_img or publish_compressed_img
+
+        if not self.run_camera == run_camera:
+            action = "Starting" if run_camera else "Stopping"
+            self.get_logger().info(f"checkSubscriberCount:: {action} camera stream")
+
+        self.run_camera = run_camera
+        self.publish_cam_info = publish_cam_info
+        self.publish_img = publish_img
+        self.publish_compressed_img = publish_compressed_img
+
+    def subscriberTransitionLogger(self, subs_before, subs_now, topic_name):
+        if not subs_now == subs_before:
+            string = "Subscribers" if subs_now else "No more subscribers"
+            self.get_logger().info(f"subscriberTransitionLogger:: {string} detected on topic {topic_name}")
+
