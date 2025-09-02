@@ -36,6 +36,7 @@ from math import pi as PI
 from copy import deepcopy
 
 from threading import Thread
+import time
 
 import rclpy
 import rclpy.time
@@ -120,8 +121,7 @@ class AxisPtz(Node):
     def rosReadParams(self):
         """ Reads parameters from the ROS parameter server."""
         self.hostname = self.readParam('hostname', '192.168.0.185')
-        self.camera_id = self.readParam('camera_id', 1)
-        self.camera_model = self.readParam('camera_model', 'axis_m5525')
+        self.camera_number = self.readParam('camera_number', 1)
         self.desired_freq = self.readParam('desired_freq', 20.0)
         self.connection_timeout = self.readParam('connection_timeout', 5.0)
         pan = Joint(
@@ -147,7 +147,7 @@ class AxisPtz(Node):
             self.readParam('zoom.offset', 0.0),
             self.readParam('zoom.error_pos', 99.0),
             self.readParam('zoom.min_augment', 0.0),
-            self.readParam('zoom.max_augment', 30.0),
+            self.readParam('zoom.max_augment', 30.0)
         )
 
         ptz_connected = False
@@ -155,7 +155,7 @@ class AxisPtz(Node):
             try:
                 self.get_logger().info(f'Connecting to PTZ camera {self.hostname}...')
                 # Initialize the PTZ camera with the provided parameters
-                self.ptz = Ptz(self.hostname, self.camera_id, pan, tilt, zoom, self.connection_timeout)
+                self.ptz = Ptz(self.hostname, self.camera_number, pan, tilt, zoom, self.connection_timeout)
                 ptz_connected = True
                 self.get_logger().info(f'Successfully connected to PTZ camera {self.hostname}')
             except Exception as e:
@@ -216,6 +216,7 @@ class AxisPtz(Node):
     def handlePtzStoppedMoving(self):
         if self.ptz.isMoving():
             self.last_time_moving = self.get_clock().now()
+            return
 
         # If the camera is not moving and the control mode is not idle, we set control mode to idle
         if self.last_time_moving and \
@@ -568,6 +569,7 @@ class AxisPtz(Node):
                 break
 
             self.publishFeedback(goal_handle)
+            time.sleep(1/self.desired_freq)
 
         if goal_handle.status < 4: # Not in [Succeeded, Cancelled, Aborted]
             self.get_logger().error(f'Exited loop in a bad state: {goal_handle.status}')

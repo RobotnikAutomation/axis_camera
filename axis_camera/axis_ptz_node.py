@@ -42,13 +42,18 @@ def main(args=None):
 
     executor = MultiThreadedExecutor()
     axis_camera_node = AxisPtz()
-    rclpy.spin(axis_camera_node, executor=executor)
+    executor.add_node(axis_camera_node)
 
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
-    axis_camera_node.destroy_node()
-    rclpy.shutdown()
+    try:
+        # Spin the executor
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Shutdown
+        executor.shutdown()
+        axis_camera_node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

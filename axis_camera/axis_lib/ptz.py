@@ -36,8 +36,8 @@ from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.axis_lib.joints import Joint, ZoomJoint
 
 class Ptz:
-    def __init__(self, hostname : str, camera_id : int, pan : Joint, tilt : Joint, zoom : ZoomJoint, connection_timeout = 1000):
-        self.controller = ControlAxis(hostname, camera_id, connection_timeout)
+    def __init__(self, hostname : str, camera_number : int, pan : Joint, tilt : Joint, zoom : ZoomJoint, connection_timeout = 1000):
+        self.controller = ControlAxis(hostname, camera_number, connection_timeout)
         info = self.controller.getPTZInfo()
         if info["error"]:
             raise Exception("Error reading PTZ info: %s" % info["error_msg"])
@@ -58,7 +58,7 @@ class Ptz:
         Returns True if the camera is currently moving.
         """
         status = self.controller.getPTZStatus()
-        if status["error"]:
+        if status["error"] or "moving" not in status:
             return False
         return not (status["moving"] == 'no')
 

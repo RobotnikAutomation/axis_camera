@@ -12,9 +12,9 @@ import socket
 import math
 
 class ControlAxis():
-    def __init__(self, hostname, camera_id = 1, timeout = 1000):
+    def __init__(self, hostname, camera_number = 1, timeout = 1000):
         self.hostname = hostname
-        self.camera_id = camera_id
+        self.camera_number = camera_number
         self.timeout = timeout
 
     # TODO: Handle when connection is not available. Added timeout
@@ -23,17 +23,19 @@ class ControlAxis():
         """
             Queries the PTZ camera with the given query parameters.
             Returns a dictionary with the status and parameters.
+            It always returns the HTTP status code, the URL used, and if there was an error.
         """
         params = {}
         conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
         try:
-            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_id, urllib_parse.urlencode(query))
+            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_number, urllib_parse.urlencode(query))
             conn.request("GET", url)
             response = conn.getresponse()
             params["status"] = response.status
             params["url"] = url
             if response.status == 200:
                 body = response.read()
+                params["raw"] = body
                 body_lines = body.splitlines()
                 for line in body_lines:
                     try:
@@ -44,7 +46,7 @@ class ControlAxis():
                         params[decoded_line[0].strip()] = decoded_line[1].strip()
 
             params["error"] = False
-            params["error_msg"] = ''
+            params["error_msg"] = response.reason
 
         except socket.timeout as e:
             params["error"]= True
@@ -73,32 +75,36 @@ class ControlAxis():
             Gets the current position of the PTZ camera.
             Returns a dictionary with the position parameters.
         """
-        reponse = self.queryPTZ({'query' : 'position'})
-        if reponse["error"]:
-            return reponse
+        response = self.queryPTZ({'query' : 'position'})
+        if response["error"]:
+            return response
 
-        pan = math.radians(float(reponse['pan']))
-        tilt = math.radians(float(reponse['tilt']))
+        if response["status"] != 200:
+            response["error"] = True
+            return response
 
-        if 'zoom' in reponse:
-            zoom = float(reponse['zoom'])
+        pan = math.radians(float(response['pan']))
+        tilt = math.radians(float(response['tilt']))
+
+        if 'zoom' in response:
+            zoom = float(response['zoom'])
         else:
             zoom = 0.0
         # Optional params (depending on model)
-        if 'iris' in reponse:
-            iris = float(reponse['iris'])
+        if 'iris' in response:
+            iris = float(response['iris'])
         else:
             iris = 0.0
-        if 'focus' in reponse:
-            focus = float(reponse['focus'])
+        if 'focus' in response:
+            focus = float(response['focus'])
         else:
             focus = 0.0
-        if 'autofocus' in reponse:
-            autofocus = (reponse['autofocus'] == 'on')
+        if 'autofocus' in response:
+            autofocus = (response['autofocus'] == 'on')
         else:
             autofocus = False
-        if 'autoiris' in reponse:
-            autoiris = (reponse['autoiris'] == 'on')
+        if 'autoiris' in response:
+            autoiris = (response['autoiris'] == 'on')
         else:
             autoiris = False
 
@@ -128,16 +134,9 @@ class ControlAxis():
             Sends the PTZ command to the camera.
             pan and tilt are in radians, zoom is a float value.
         """
-        ret = {}
 
         params = { 'pan': pan, 'tilt': tilt, 'zoom': zoom }
-        response = self.queryPTZ(params)
-
-        ret['status'] = response['status']
-        ret['url'] = response['url']
-        ret['error'] = response['error']
-        ret['error_msg'] = response['error_msg']
-        return ret
+        return self.queryPTZ(params)
 
     def sendPTZVelocityCommand(self, pan, tilt, zoom):
         """
@@ -164,13 +163,6 @@ class ControlAxis():
             "value=100|speed=150"
         )
         """
-        ret = {}
 
         params = { 'continuouspantiltmove': f'{pan},{tilt}', 'continuouszoommove': zoom }
-        response = self.queryPTZ(params)
-
-        ret['status'] = response['status']
-        ret['url'] = response['url']
-        ret['error'] = response['error']
-        ret['error_msg'] = response['error_msg']
-        return ret
+        return self.queryPTZ(params)
