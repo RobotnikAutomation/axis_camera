@@ -40,6 +40,10 @@ from axis_camera.axis_lib.axis_stream import StreamAxis
 from camera_info_manager import CameraInfoManager, genCameraName
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+
 class AxisStream(Node):
     """
         Class to handle the stream from the Axis camera.
@@ -68,6 +72,8 @@ class AxisStream(Node):
         self.publish_cam_info = False
         self.publish_img = False
         self.publish_compressed_img = False
+
+        self.bridge = CvBridge()
 
         self.rosSetup()
         if self.initialization_delay > 0:
@@ -166,10 +172,7 @@ class AxisStream(Node):
         stamp = self.get_clock().now().to_msg()
 
         if self.publish_img:
-            msg = Image()
-            msg.header.stamp = stamp
-            msg.header.frame_id = self.axis_frame_id
-            msg.data = image
+            msg = self.convertToROSImage(image, "rgb8")
             self.image_publisher.publish(msg)
 
         if self.publish_compressed_img:
@@ -185,6 +188,19 @@ class AxisStream(Node):
             camera_info_msg.header.stamp = stamp
             camera_info_msg.header.frame_id = self.axis_frame_id
             self.camera_info_publisher.publish(camera_info_msg)
+
+    def convertToROSImage(self, image: bytes, encoding: str) -> Image:
+        """
+        Convert an OpenCV image to a ROS Image message.
+        
+        :param image: bytes array representing the image
+        :param encoding: Encoding type (e.g., "bgr8", "mono8")
+        :return: ROS Image message
+        """
+        np_array = np.frombuffer(image, np.uint8)
+        cv_image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+
+        return self.bridge.cv2_to_imgmsg(cv_image, encoding = encoding)
 
     def checkSubscriberCount(self):
         """
