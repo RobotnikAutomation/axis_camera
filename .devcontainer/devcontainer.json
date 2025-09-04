@@ -1,0 +1,32 @@
+{
+    "name": "Robot Packages: ROS2",
+    "dockerComposeFile": "compose.yaml",
+    "service": "workspace",
+    "workspaceFolder": "/home/robot/robot_ws",
+    "remoteUser": "robot",
+    "postCreateCommand": "./src/workspace/.devcontainer/postcreate.sh",
+    "customizations": {
+      "vscode": {
+        "extensions": [
+          "ms-vscode.cpptools",
+          "GitHub.copilot",
+          "redhat.vscode-xml",
+          "ms-python.python",
+          "esbenp.prettier-vscode"
+        ],
+        "settings": {
+          "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+          "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+          "C_Cpp.default.compilerPath": "/usr/bin/gcc",
+          "C_Cpp.default.cStandard": "c17",
+          "C_Cpp.default.cppStandard": "c++20",
+          "C_Cpp.default.includePath": [
+            "/opt/ros/humble/include/**",
+            "${workspaceFolder}/install/**",
+            "${workspaceFolder}/src/**"
+          ],
+          "python.envFile": "${workspaceFolder}/src/workspace/.devcontainer/python.env"
+        }
+      }
+    }
+}
