@@ -1,14 +1,4 @@
-try:
-    import urllib.parse as urllib_parse
-except:
-	import urllib as urllib_parse #Not tested in pyhton2
-
-try:
-    import httplib
-except:
-    import http.client as httplib
-
-import socket
+import requests
 import math
 
 class ControlAxis():
@@ -25,38 +15,19 @@ class ControlAxis():
             Returns a dictionary with the status and parameters.
             It always returns the HTTP status code, the URL used, and if there was an error.
         """
-        params = {}
-        conn = httplib.HTTPConnection(self.hostname, timeout = self.timeout)
+        url = "http://%s/axis-cgi/com/ptz.cgi?camera=%s" % (self.hostname, self.camera_number)
+        params = {"url" : url}
         try:
-            url = "/axis-cgi/com/ptz.cgi?camera=%s&%s" % (self.camera_number, urllib_parse.urlencode(query))
-            conn.request("GET", url)
-            response = conn.getresponse()
-            params["status"] = response.status
-            params["url"] = url
-            if response.status == 200:
-                body = response.read()
-                params["raw"] = body
-                body_lines = body.splitlines()
-                for line in body_lines:
-                    try:
-                        decoded_line = line.split('=', 2)
-                    except:
-                        decoded_line = line.decode().split('=', 2)
-                    if len(decoded_line) == 2:
-                        params[decoded_line[0].strip()] = decoded_line[1].strip()
-
+            response = requests.get(url, params=query, timeout=self.timeout)
+            params["status"] = response.status_code
+            params["text"] = response.text
             params["error"] = False
             params["error_msg"] = response.reason
+            for line in response.text.splitlines():
+                split_line = line.split('=', 2)
+                if len(split_line) == 2:
+                    params[split_line[0].strip()] = split_line[1].strip()
 
-        except socket.timeout as e:
-            params["error"]= True
-            params["error_msg"] = e
-        except socket.error as e:
-            params["error"]= True
-            params["error_msg"] = e
-        except ValueError as e:
-            params["error"]= True
-            params["error_msg"] = e
         except Exception as e:
             params["error"]= True
             params["error_msg"] = e
