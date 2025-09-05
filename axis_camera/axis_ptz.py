@@ -218,15 +218,18 @@ class AxisPtz(Node):
             self.last_time_moving = self.get_clock().now()
             return
 
+        if self.control_mode == self.IDLE:
+            self.last_time_moving = None
+
         # If the camera is not moving and the control mode is not idle, we set control mode to idle
-        if self.last_time_moving and \
-            self.control_mode != self.IDLE and \
+        elif self.last_time_moving and \
             (self.get_clock().now() - self.last_time_moving > self.camera_not_moving_timeout):
 
             self.get_logger().info(f'PTZ camera is not moving, switching to idle mode')
-            if self.current_goal is not None and self.current_goal.is_active:
+            if self.current_goal is not None and self.current_goal.is_active: #Pos control
                 self.abortAction(self.current_goal, 'PTZ camera stopped moving')
-            self.last_time_moving = None
+            else: #Vel control
+                self.switchToControlState(self.IDLE)
         else:
             # Try to send the command again while the timeout is not reached
             if self.control_mode == self.POSITION:
