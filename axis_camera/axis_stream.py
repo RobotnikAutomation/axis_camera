@@ -117,7 +117,7 @@ class AxisStream(Node):
     def rosReadParams(self):
         self.hostname = self.readParam('hostname', '192.168.0.185')
         self.camera_number = self.readParam('camera_number', 1)
-        self.camera_id = self.readParam('camera_id', 'XXXX')
+        self.camera_id = self.readParam('camera_id', 'camera')
         self.camera_info_url = self.readParam('camera_info_url', 'package://axis_camera/data/default_calibration.yaml')
         self.fps = self.readParam('fps', 0)
         self.compression = self.readParam('compression', 0)
