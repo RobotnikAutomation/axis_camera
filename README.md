@@ -5,7 +5,7 @@ This package contains the ROS2 nodes for controlling and streaming AXIS PTZ came
 To run both of them:
 
 ```bash
-ros2 launch axis_camera axis_camera.launch.py"
+ros2 launch axis_camera axis_camera.launch.py
 ```
 
 # Dependencies
