@@ -1,11 +1,9 @@
 try:
     import urllib2 as urllib_request #Not tested in pyhton2
-    import urllib2 as urllib_error
 except:
     import urllib.request as urllib_request
-    import urllib.error as urllib_error
-import base64
-import socket
+
+import requests
 
 class StreamAxis():
     def __init__(self, args):
@@ -23,35 +21,59 @@ class StreamAxis():
         if 'videocodec' not in args.keys():
             args['videocodec'] = 'mpeg4'
         self.videocodec = args['videocodec'] # h264, mpeg4
+        video_formats = self.getSupportedImageFormats()
+        if self.videocodec not in video_formats:
+            print("Video codec %s not supported. Supported videocodecs are %s. Using %s" % (self.videocodec, video_formats, video_formats[0]))
+            self.videocodec = video_formats[0]
 
-        self._url = 'http://%s/axis-cgi/mjpg/video.cgi?streamprofile=%s&camera=%d&fps=%d&compression=%d' % (
-            self.hostname, self.profile, self.camera_number, self.fps, self.compression)
+        self._url = 'http://%s/axis-cgi/mjpg/video.cgi?streamprofile=%s&camera=%d&fps=%d&compression=%d&videocodec=%s' % (
+            self.hostname, self.profile, self.camera_number, self.fps, self.compression, self.videocodec)
+
+        self.resolution = args["resolution"]
+        resolution_options = self.getSupportedResolutions()
+        if not resolution_options:
+            print("Could not get supported resolutions. Using default.")
+        else:
+            if self.resolution not in resolution_options:
+                print("Resolution %s not supported.  Suported resolutions are %s. Using %s" % (self.resolution, resolution_options, resolution_options[0]))
+                self.resolution = resolution_options[0]
+            self._url += '&resolution=%s' % self.resolution
+
+    def getSupportedImageFormats(self):
+        query = {}
+        url = "http://%s/axis-cgi/param.cgi?action=list&group=Properties.Image.Format&camera=%s" % (self.hostname, self.camera_number)
         try:
-            encodedstring = base64.encodestring(self.username + ":" + str(self.password))[:-1]
-        except:
-            encodedstring = base64.encodebytes((self.username + ":" + str(self.password)).encode())[:-1]
-        self.auth = "Basic %s" % encodedstring
+            response = requests.get(url, params=query, timeout=self.timeout)
+            for line in response.text.splitlines():
+                split_line = line.split('=', 2)
+                if len(split_line) == 2:
+                    options = split_line[1].strip().split(',')
+
+        except Exception as e:
+            options = ['mjpeg', 'h264']
+
+        return options
+
+    def getSupportedResolutions(self):
+        query = {}
+        url = "http://%s/axis-cgi/param.cgi?action=list&group=Properties.Image.Resolution&camera=%s" % (self.hostname, self.camera_number)
+        try:
+            response = requests.get(url, params=query, timeout=self.timeout)
+            for line in response.text.splitlines():
+                split_line = line.split('=', 2)
+                if len(split_line) == 2:
+                    options = split_line[1].strip().split(',')
+
+        except Exception as e:
+            options = []
+
+        return options
 
     def getUrl(self):
         return self._url
 
-    def authenticate(self):
-        # create a password manager
-        password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
 
-        # Add the username and password, use default realm.
-        top_level_url = "http://" + self.hostname
-        password_mgr.add_password(None, top_level_url, self.username,
-                                                            self.password)
-        handler = urllib_request.HTTPBasicAuthHandler(password_mgr)
-
-       # create "opener" (OpenerDirector instance)
-        opener = urllib_request.build_opener(handler)
-
-        # ...and install it globally so it can be used with urlopen.
-        urllib_request.install_opener(opener)
-
-    def stream(self): #Change msgs
+    def stream(self):
         """
                 Reads and process the streams from the camera
         """
@@ -59,26 +81,10 @@ class StreamAxis():
         error_msg = ''
         try:
             # If flag self.enable_auth is 'True' then use the user/password to access the camera. Otherwise use only self.url
-            try:
-                if self.enable_auth:
-                    req = urllib_request.Request(self._url, None, {"Authorization": self.auth})
-                else:
-                    req = urllib_request.Request(self._url)
-                self.fp = urllib_request.urlopen(req, timeout=self.timeout)
-            
-            except:
-                req = urllib_request.Request(self._url)
-                if self.enable_auth:
-                    self.authenticate()
-                self.fp = urllib_request.urlopen(req, timeout=self.timeout)
+            req = urllib_request.Request(self._url)
+            self.fp = urllib_request.urlopen(req, timeout=self.timeout)
     
-        except urllib_error.HTTPError as e:
-            error = True
-            error_msg = e
-        except urllib_error.URLError as e:
-            error = True
-            error_msg = e
-        except socket.timeout as e:
+        except Exception as e:
             error = True
             error_msg = e
 

@@ -63,7 +63,8 @@ class AxisStream(Node):
             'compression': self.compression,
             'profile': self.profile,
             'timeout': self.timeout,
-            'videocodec': self.videocodec
+            'videocodec': self.videocodec,
+            'resolution': self.resolution
         })
 
         self.url = self.streamer.getUrl()
@@ -129,7 +130,8 @@ class AxisStream(Node):
         self.axis_frame_id = self.readParam('axis_frame_id', 'axis_camera')
         self.profile = self.readParam('profile', 'Test')
         self.timeout = self.readParam('timeout', 5.0)
-        self.videocodec = self.readParam('videocodec', 'mpeg4')
+        self.videocodec = self.readParam('videocodec', 'jpeg')
+        self.resolution = self.readParam('resolution', '1920x1080')
         self.initialization_delay = self.readParam('initialization_delay', 0.0)
         self.reconnection_time = self.readParam('reconnection_time', 5.0)
         self.desired_freq = self.readParam('desired_freq', 30.0)
