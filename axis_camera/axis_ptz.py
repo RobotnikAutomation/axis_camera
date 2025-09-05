@@ -47,6 +47,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 
 from axis_camera.axis_lib.ptz import Ptz
 from axis_camera.axis_lib.joints import Joint, ZoomJoint
+from axis_camera.axis_lib.timer_watchdog import Timer
 
 from robotnik_actuators_msgs.action import SetPtz
 from robotnik_sensors_msgs.msg import Axis
@@ -75,13 +76,8 @@ class AxisPtz(Node):
         self.control_mode = self.IDLE
         self.previous_velocity = Twist()
 
-        self.time_last_position_command_received = self.get_clock().now()
-        self.time_last_velocity_command_received = self.get_clock().now()
-        self.last_time_moving = None
-
         self.rosSetup()
         self.ptz.updatePtzPosition()
-        # self.timer = self.create_timer(1/self.desired_freq, self.controlLoop)
         self.update_thread = Thread(target = self.controlLoop, daemon = True)
         self.update_thread.start()
            
@@ -162,12 +158,14 @@ class AxisPtz(Node):
             except Exception as e:
                 self.get_logger().error(f'Error connecting to PTZ camera: {e}')
 
-        camera_not_moving_timeout_value = self.readParam('camera_not_moving_timeout_value', 3.0)
-        self.camera_not_moving_timeout = rclpy.time.Duration(seconds=camera_not_moving_timeout_value)
-        duration_last_position_command_watchdog_value = self.readParam('duration_last_position_command_watchdog_value', 10.0)
-        self.duration_last_position_command_watchdog = rclpy.time.Duration(seconds=duration_last_position_command_watchdog_value)
-        duration_last_velocity_command_watchdog_value = self.readParam('duration_last_velocity_command_watchdog_value', 0.50)
-        self.duration_last_velocity_command_watchdog = rclpy.time.Duration(seconds=duration_last_velocity_command_watchdog_value)
+        camera_not_moving_timeout = self.readParam('camera_not_moving_timeout', 3.0)
+        last_position_command_timeout = self.readParam('last_position_command_timeout', 10.0)
+        last_velocity_command_timeout = self.readParam('last_velocity_command_timeout', 0.50)
+
+        self.position_timer = Timer(last_position_command_timeout, False)
+        self.moving_timer = Timer(camera_not_moving_timeout, False)
+        self.velocity_timer = Timer(last_velocity_command_timeout, False)
+
         self.reject_new_goal = self.readParam('reject_new_goal', False)
 
     def rosSetup(self):
@@ -218,17 +216,15 @@ class AxisPtz(Node):
 
     def handlePtzStoppedMoving(self):
         if self.ptz.isMoving():
-            self.last_time_moving = self.get_clock().now()
+            self.moving_timer.reset()
             return
 
         if self.control_mode == self.IDLE:
-            self.last_time_moving = None
+            self.moving_timer.stop()
 
         # If the camera is not moving and the control mode is not idle, we set control mode to idle
-        elif self.last_time_moving and \
-            (self.get_clock().now() - self.last_time_moving > self.camera_not_moving_timeout):
-
-            self.get_logger().info(f'PTZ camera is not moving, switching to idle mode')
+        elif self.moving_timer.isFinished():
+            self.get_logger().info(f'PTZ camera is not moving for {self.moving_timer.getDuration()} seconds, switching to idle mode')
             if self.current_goal is not None and self.current_goal.is_active: #Pos control
                 self.abortAction(self.current_goal, 'PTZ camera stopped moving')
             else: #Vel control
@@ -256,8 +252,8 @@ class AxisPtz(Node):
                 elif self.control_mode == self.VELOCITY:
                     self.sendPtzVelocityCommand()
             elif self.command_sent and self.control_mode == self.VELOCITY:
-                if self.get_clock().now() - self.time_last_velocity_command_received > self.duration_last_velocity_command_watchdog:
-                    self.get_logger().error(f'No velocity command received for {self.duration_last_velocity_command_watchdog.nanoseconds/1e9} seconds, switching to idle mode')
+                if self.velocity_timer.isFinished():
+                    self.get_logger().error(f'No velocity command received for {self.velocity_timer.getDuration()} seconds, switching to idle mode')
                     self.switchToControlState(self.IDLE)
 
             self.handlePtzStoppedMoving()
@@ -388,7 +384,7 @@ class AxisPtz(Node):
                                 )
             return
         
-        self.time_last_velocity_command_received = self.get_clock().now()
+        self.velocity_timer.reset()
         # If the velocity is zero, we set the control mode to idle
         if msg.angular.z == 0.0 and msg.linear.y == 0.0 and msg.linear.x == 0.0:
             self.previous_velocity = msg
@@ -516,9 +512,9 @@ class AxisPtz(Node):
                     self.abortAction(self.current_goal, 'New goal received, aborting previous goal')
 
                 # Wait until the control mode is idle
-                goal_received_time = self.get_clock().now()
+                goal_received_timer = Timer(5.0)
                 while self.control_mode != self.IDLE and rclpy.ok() and \
-                (self.get_clock().now() - goal_received_time < rclpy.time.Duration(seconds=5.0)):
+                (not goal_received_timer.isFinished()):
                     pass
 
                 # If the control mode is idle, accept the goal
@@ -526,7 +522,7 @@ class AxisPtz(Node):
                     self.switchToControlState(self.POSITION)
                     return GoalResponse.ACCEPT
                 else:
-                    self.get_logger().error(f'Control mode is not idle after 5 seconds for some unknown reason, rejecting goal')
+                    self.get_logger().error(f'Control mode is not idle after {goal_received_timer.getDuration()} seconds for some unknown reason, rejecting goal')
                     return GoalResponse.REJECT   
 
     def setPtzAcceptedCb(self, goal_handle : ServerGoalHandle):
@@ -554,7 +550,7 @@ class AxisPtz(Node):
             tilt (float): The desired tilt position.
             zoom (float): The desired zoom position.
         """
-        self.time_last_position_command_received = self.get_clock().now()
+        self.position_timer.reset()
         self.setPtzDesiredPosition(pan, tilt, zoom)
         goal_handle.execute()
 
@@ -579,8 +575,8 @@ class AxisPtz(Node):
                 break
 
             # If timeout has been reached, abort the goal
-            elif self.get_clock().now() - self.time_last_position_command_received > self.duration_last_position_command_watchdog:
-                self.abortAction(goal_handle, 'PTZ position not reached in time')
+            elif self.position_timer.isFinished():
+                self.abortAction(goal_handle, f'PTZ position not reached in time ({self.position_timer.getDuration()} seconds)')
                 break
 
             elif goal_handle.is_cancel_requested:
