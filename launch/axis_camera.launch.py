@@ -9,59 +9,70 @@ import os
 
 def generate_launch_description():
     # Declare arguments
+    args = []
+
     ptz_arg = DeclareLaunchArgument(
         'ptz',
         default_value='true',
         description='Flag to enable PTZ control (true/false)'
     )
+    args.append(ptz_arg)
 
     stream_arg = DeclareLaunchArgument(
         'stream',
         default_value='true',
         description='Flag to enable image streaming (true/false)'
     )
+    args.append(stream_arg)
 
     camera_model_arg = DeclareLaunchArgument(
         'camera_model',
         default_value='axis_m5525',
         description='Camera model (e.g., axis_m5525, axis_p5635)'
     )
+    args.append(camera_model_arg)
 
     camera_number_arg = DeclareLaunchArgument(
         'camera_number',
         default_value='1',
         description='Camera number'
     )
+    args.append(camera_number_arg)
 
     node_name_arg = DeclareLaunchArgument(
         'node_name',
         default_value='axis_camera',
         description='Name of the camera nodes'
     )
+    args.append(node_name_arg)
 
     ip_address_arg = DeclareLaunchArgument(
         'ip_address',
         default_value='192.168.0.185',
         description='IP address of the camera'
     )
+    args.append(ip_address_arg)
 
     username_arg = DeclareLaunchArgument(
         'username',
         default_value='root',
         description='Username for camera access'
     )
+    args.append(username_arg)
 
     password_arg = DeclareLaunchArgument(
         'password',
         default_value='R0b0tn1K',
         description='Password for camera access'
     )
+    args.append(password_arg)
 
     enable_auth_arg = DeclareLaunchArgument(
         'enable_auth',
         default_value='false',
         description='Enable authentication (true/false)'
     )
+    args.append(enable_auth_arg)
 
     # LaunchConfigurations to retrieve argument values
     ptz = LaunchConfiguration('ptz')
@@ -109,15 +120,4 @@ def generate_launch_description():
         ]
     )
 
-    return LaunchDescription([
-        ptz_arg,
-        stream_arg,
-        camera_model_arg,
-        camera_number_arg,
-        node_name_arg,
-        ip_address_arg,
-        username_arg,
-        password_arg,
-        enable_auth_arg,
-        load_nodes
-    ])
+    return LaunchDescription(args + [load_nodes])

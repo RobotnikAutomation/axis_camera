@@ -7,10 +7,7 @@ import requests
 
 class StreamAxis():
     def __init__(self, args):
-        self.enable_auth = args['enable_auth']
         self.hostname = args['hostname']
-        self.username = args['username']
-        self.password = args['password']
         self.camera_number = args['camera_number']
         self.fps = args['fps']
         self.compression = args['compression']
@@ -80,7 +77,6 @@ class StreamAxis():
         error = False
         error_msg = ''
         try:
-            # If flag self.enable_auth is 'True' then use the user/password to access the camera. Otherwise use only self.url
             req = urllib_request.Request(self._url)
             self.fp = urllib_request.urlopen(req, timeout=self.timeout)
     

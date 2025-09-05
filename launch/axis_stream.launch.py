@@ -8,95 +8,96 @@ from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
+    args = []
     node_name_arg = DeclareLaunchArgument(
         'node_name',
         default_value='axis_camera'
     )
+    args.append(node_name_arg)
     ip_address_arg = DeclareLaunchArgument(
         'ip_address',
         default_value='192.168.0.185'
     )
-    username_arg = DeclareLaunchArgument(
-        'username',
-        default_value='root'
-    )
-    password_arg = DeclareLaunchArgument(
-        'password',
-        default_value='pass'
-    )
+    args.append(ip_address_arg)
     frame_id_arg = DeclareLaunchArgument(
         'frame_id',
         default_value='camera'
     )
+    args.append(frame_id_arg)
     camera_info_url_arg = DeclareLaunchArgument(
         'camera_info_url',
         default_value=''
     )
-    run_republisher_arg = DeclareLaunchArgument(
-        'run_republisher',
-        default_value='true'
-    )
+    args.append(camera_info_url_arg)
     camera_id_arg = DeclareLaunchArgument(
         'camera_id',
         default_value='camera'
     )
+    args.append(camera_id_arg)
     camera_number_arg = DeclareLaunchArgument(
         'camera_number',
         default_value='0'
     )
+    args.append(camera_number_arg)
     fps_arg = DeclareLaunchArgument(
         'fps',
         default_value='30'
     )
+    args.append(fps_arg)
     compression_arg = DeclareLaunchArgument(
         'compression',
         default_value='0'
     )
+    args.append(compression_arg)
     profile_arg = DeclareLaunchArgument(
         'profile',
         default_value='high'
     )
-    enable_auth_arg = DeclareLaunchArgument(
-        'enable_auth',
-        default_value='false'
-    )
+    args.append(profile_arg)
     initialization_delay_arg = DeclareLaunchArgument(
         'initialization_delay',
         default_value='0.0'
     )
+    args.append(initialization_delay_arg)
     timeout_arg = DeclareLaunchArgument(
         'timeout',
         default_value='5.0'
     )
+    args.append(timeout_arg)
     videocodec_arg = DeclareLaunchArgument(
         'videocodec',
         default_value='mjpeg'
     )
+    args.append(videocodec_arg)
+    resolution_arg = DeclareLaunchArgument(
+        'resolution',
+        default_value='1920x1080'
+    )
+    args.append(resolution_arg)
     reconection_time_arg = DeclareLaunchArgument(
         'reconection_time',
         default_value='5.0'
     )
+    args.append(reconection_time_arg)
     desired_freq_arg = DeclareLaunchArgument(
         'desired_freq',
         default_value='20.0'
     )
+    args.append(desired_freq_arg)
  
     node_name = LaunchConfiguration('node_name')
     ip_address = LaunchConfiguration('ip_address')
-    username = LaunchConfiguration('username')
-    password = LaunchConfiguration('password')
     frame_id = LaunchConfiguration('frame_id')
     camera_info_url = LaunchConfiguration('camera_info_url')
-    run_republisher = LaunchConfiguration('run_republisher')
     camera_id = LaunchConfiguration('camera_id')
     camera_number = LaunchConfiguration('camera_number')
     fps = LaunchConfiguration('fps')
     compression = LaunchConfiguration('compression')
     profile = LaunchConfiguration('profile')
-    enable_auth = LaunchConfiguration('enable_auth')
     initialization_delay = LaunchConfiguration('initialization_delay')
     timeout = LaunchConfiguration('timeout')
     videocodec = LaunchConfiguration('videocodec')
+    resolution = LaunchConfiguration('resolution')
     reconection_time = LaunchConfiguration('reconection_time')
     desired_freq = LaunchConfiguration('desired_freq')
 
@@ -108,8 +109,6 @@ def generate_launch_description():
             name=PythonExpression(["'", node_name, "' + '_stream'"]),
             parameters=[{
                 'hostname': ip_address,
-                'username': username,
-                'password': password,
                 'axis_frame_id': frame_id,
                 'camera_info_url': camera_info_url,
                 'camera_id': camera_id,
@@ -117,33 +116,14 @@ def generate_launch_description():
                 'fps': fps,
                 'compression': compression,
                 'profile': profile,
-                'enable_auth': enable_auth,
                 'initialization_delay': initialization_delay,
                 'timeout': timeout,
                 'videocodec': videocodec,
+                'resolution': resolution,
                 'reconnection_time' : reconection_time,
                 'desired_freq': desired_freq,
             }],
         )
     ])
 
-    return LaunchDescription([
-        node_name_arg,
-        ip_address_arg,
-        username_arg,
-        password_arg,
-        frame_id_arg,
-        camera_info_url_arg,
-        run_republisher_arg,
-        camera_id_arg,
-        camera_number_arg,
-        fps_arg,
-        compression_arg,
-        profile_arg,
-        enable_auth_arg,
-        initialization_delay_arg,
-        timeout_arg,
-        videocodec_arg,
-        reconection_time_arg,
-        desired_freq_arg,
-        load_nodes])
+    return LaunchDescription(args + [load_nodes])

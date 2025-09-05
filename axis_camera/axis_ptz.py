@@ -117,10 +117,10 @@ class AxisPtz(Node):
 
     def rosReadParams(self):
         """ Reads parameters from the ROS parameter server."""
-        self.hostname = self.readParam('hostname', '192.168.0.185')
-        self.camera_number = self.readParam('camera_number', 1)
+        hostname = self.readParam('hostname', '192.168.0.185')
+        camera_number = self.readParam('camera_number', 1)
         self.desired_freq = self.readParam('desired_freq', 20.0)
-        self.connection_timeout = self.readParam('connection_timeout', 5.0)
+        connection_timeout = self.readParam('connection_timeout', 5.0)
         pan = Joint(
             self.readParam('pan.min_value', -PI), 
             self.readParam('pan.max_value', PI), 
@@ -150,11 +150,11 @@ class AxisPtz(Node):
         ptz_connected = False
         while not ptz_connected and rclpy.ok():
             try:
-                self.get_logger().info(f'Connecting to PTZ camera {self.hostname}...')
+                self.get_logger().info(f'Connecting to PTZ camera {hostname}...')
                 # Initialize the PTZ camera with the provided parameters
-                self.ptz = Ptz(self.hostname, self.camera_number, pan, tilt, zoom, self.connection_timeout)
+                self.ptz = Ptz(hostname, camera_number, pan, tilt, zoom, connection_timeout)
                 ptz_connected = True
-                self.get_logger().info(f'Successfully connected to PTZ camera {self.hostname}')
+                self.get_logger().info(f'Successfully connected to PTZ camera {hostname}')
             except Exception as e:
                 self.get_logger().error(f'Error connecting to PTZ camera: {e}')
 

@@ -54,10 +54,7 @@ class AxisStream(Node):
 
         self.rosReadParams()
         self.streamer = StreamAxis({
-            'enable_auth': self.enable_auth,
             'hostname': self.hostname,
-            'username': self.username,
-            'password': self.password,
             'camera_number': self.camera_number,
             'fps': self.fps,
             'compression': self.compression,
@@ -119,9 +116,6 @@ class AxisStream(Node):
 
     def rosReadParams(self):
         self.hostname = self.readParam('hostname', '192.168.0.185')
-        self.enable_auth = self.readParam('enable_auth', True)
-        self.username = self.readParam('username', 'root')
-        self.password = self.readParam('password', 'R0b0tn1K')
         self.camera_number = self.readParam('camera_number', 1)
         self.camera_id = self.readParam('camera_id', 'XXXX')
         self.camera_info_url = self.readParam('camera_info_url', 'package://axis_camera/data/default_calibration.yaml')
