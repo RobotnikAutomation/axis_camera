@@ -75,7 +75,8 @@ class AxisPtz(Node):
         self.control_mode = self.IDLE
         self.previous_velocity = Twist()
 
-        self.time_last_command_received = self.get_clock().now()
+        self.time_last_position_command_received = self.get_clock().now()
+        self.time_last_velocity_command_received = self.get_clock().now()
         self.last_time_moving = None
 
         self.rosSetup()
@@ -163,8 +164,10 @@ class AxisPtz(Node):
 
         camera_not_moving_timeout_value = self.readParam('camera_not_moving_timeout_value', 3.0)
         self.camera_not_moving_timeout = rclpy.time.Duration(seconds=camera_not_moving_timeout_value)
-        duration_last_command_watchdog_value = self.readParam('duration_last_command_watchdog_value', 10.0)
-        self.duration_last_command_watchdog = rclpy.time.Duration(seconds=duration_last_command_watchdog_value)
+        duration_last_position_command_watchdog_value = self.readParam('duration_last_position_command_watchdog_value', 10.0)
+        self.duration_last_position_command_watchdog = rclpy.time.Duration(seconds=duration_last_position_command_watchdog_value)
+        duration_last_velocity_command_watchdog_value = self.readParam('duration_last_velocity_command_watchdog_value', 0.50)
+        self.duration_last_velocity_command_watchdog = rclpy.time.Duration(seconds=duration_last_velocity_command_watchdog_value)
         self.reject_new_goal = self.readParam('reject_new_goal', False)
 
     def rosSetup(self):
@@ -252,6 +255,10 @@ class AxisPtz(Node):
                     self.sendPtzCommand()
                 elif self.control_mode == self.VELOCITY:
                     self.sendPtzVelocityCommand()
+            elif self.command_sent and self.control_mode == self.VELOCITY:
+                if self.get_clock().now() - self.time_last_velocity_command_received > self.duration_last_velocity_command_watchdog:
+                    self.get_logger().error(f'No velocity command received for {self.duration_last_velocity_command_watchdog.nanoseconds/1e9} seconds, switching to idle mode')
+                    self.switchToControlState(self.IDLE)
 
             self.handlePtzStoppedMoving()
             self.ptz.updatePtzPosition()
@@ -285,7 +292,7 @@ class AxisPtz(Node):
         else:
             self.control_mode = new_state
 
-    def getPtzDesiredPositionFromGoal(self, goal):
+    def getPtzDesiredPositionFromGoal(self, goal : SetPtz.Goal):
         """
         Gets the desired PTZ position from the action goal.
         This method retrieves the desired pan, tilt, and zoom values from the action goal.
@@ -381,6 +388,7 @@ class AxisPtz(Node):
                                 )
             return
         
+        self.time_last_velocity_command_received = self.get_clock().now()
         # If the velocity is zero, we set the control mode to idle
         if msg.angular.z == 0.0 and msg.linear.y == 0.0 and msg.linear.x == 0.0:
             self.previous_velocity = msg
@@ -388,13 +396,21 @@ class AxisPtz(Node):
             return
         
         # If the velocity is the same as the previous one, we do not send the command
-        if msg == self.previous_velocity and self.control_mode == self.VELOCITY:
+        if not self.areTwistCommandsDifferentXYYaw(msg, self.previous_velocity) and self.control_mode == self.VELOCITY:
             return
         
         # If the velocity is different, we set the control mode to velocity and send the command
         self.previous_velocity = msg
         self.setPtzDesiredVelocity(msg.linear.x, msg.linear.y, msg.angular.z)
         self.switchToControlState(self.VELOCITY)
+
+    def areTwistCommandsDifferentXYYaw(self, twist1 : Twist, twist2 : Twist) -> bool:
+        """
+        Checks if two Twist commands are different in the x, y, and yaw components.
+        """
+        return (twist1.linear.x != twist2.linear.x) or \
+                (twist1.linear.y != twist2.linear.y) or \
+                (twist1.angular.z != twist2.angular.z)
 
     def stopVelocityControlCb(self, request : Trigger.Request, response : Trigger.Response):
         """
@@ -538,7 +554,7 @@ class AxisPtz(Node):
             tilt (float): The desired tilt position.
             zoom (float): The desired zoom position.
         """
-        self.time_last_command_received = self.get_clock().now()
+        self.time_last_position_command_received = self.get_clock().now()
         self.setPtzDesiredPosition(pan, tilt, zoom)
         goal_handle.execute()
 
@@ -563,7 +579,7 @@ class AxisPtz(Node):
                 break
 
             # If timeout has been reached, abort the goal
-            elif self.get_clock().now() - self.time_last_command_received > self.duration_last_command_watchdog:
+            elif self.get_clock().now() - self.time_last_position_command_received > self.duration_last_position_command_watchdog:
                 self.abortAction(goal_handle, 'PTZ position not reached in time')
                 break
 
