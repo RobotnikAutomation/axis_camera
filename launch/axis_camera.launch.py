@@ -53,27 +53,6 @@ def generate_launch_description():
     )
     args.append(ip_address_arg)
 
-    username_arg = DeclareLaunchArgument(
-        'username',
-        default_value='root',
-        description='Username for camera access'
-    )
-    args.append(username_arg)
-
-    password_arg = DeclareLaunchArgument(
-        'password',
-        default_value='R0b0tn1K',
-        description='Password for camera access'
-    )
-    args.append(password_arg)
-
-    enable_auth_arg = DeclareLaunchArgument(
-        'enable_auth',
-        default_value='false',
-        description='Enable authentication (true/false)'
-    )
-    args.append(enable_auth_arg)
-
     # LaunchConfigurations to retrieve argument values
     ptz = LaunchConfiguration('ptz')
     stream = LaunchConfiguration('stream')
@@ -81,9 +60,6 @@ def generate_launch_description():
     camera_number = LaunchConfiguration('camera_number')
     node_name = LaunchConfiguration('node_name')
     ip_address = LaunchConfiguration('ip_address')
-    username = LaunchConfiguration('username')
-    password = LaunchConfiguration('password')
-    enable_auth = LaunchConfiguration('enable_auth')
 
     # GroupAction with namespace and node
     load_nodes = GroupAction(
@@ -94,9 +70,6 @@ def generate_launch_description():
                 ),
                 launch_arguments={
                     'ip_address': ip_address,
-                    'username': username,
-                    'password': password,
-                    'enable_auth': enable_auth,
                     'node_name': node_name,
                     'camera_number': camera_number
                 }.items(),
@@ -109,9 +82,6 @@ def generate_launch_description():
                 launch_arguments={
                     'camera_model': camera_model,
                     'ip_address': ip_address,
-                    'username': username,
-                    'password': password,
-                    'enable_auth': enable_auth,
                     'node_name': node_name,
                     'camera_number': camera_number
                 }.items(),
