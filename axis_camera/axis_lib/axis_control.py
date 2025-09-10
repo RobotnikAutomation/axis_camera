@@ -54,8 +54,13 @@ class ControlAxis():
             response["error"] = True
             return response
 
-        pan = math.radians(float(response['pan']))
-        tilt = math.radians(float(response['tilt']))
+        if 'pan' in response and 'tilt' in response:
+            pan = math.radians(float(response['pan']))
+            tilt = math.radians(float(response['tilt']))
+        else:
+            response["error"] = True
+            response["error_msg"] = response["text"]
+            return response
 
         if 'zoom' in response:
             zoom = float(response['zoom'])
