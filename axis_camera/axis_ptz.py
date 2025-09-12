@@ -50,7 +50,7 @@ from axis_camera.axis_lib.joints import Joint, ZoomJoint
 from axis_camera.axis_lib.timer_watchdog import Timer
 
 from robotnik_actuators_msgs.action import SetPtz
-from robotnik_sensors_msgs.msg import Axis
+from robotnik_sensors_msgs.msg import CameraSettings
 from sensor_msgs.msg import JointState
 from geometry_msgs.msg import Twist
 
@@ -211,8 +211,8 @@ class AxisPtz(Node):
             )
 
         self.joint_state_pub = self.create_publisher(JointState, '~/joint_states', 1)
-        self.axis_status_pub = self.create_publisher(Axis, '~/status', 1)
-        self.axis_status_raw_pub = self.create_publisher(Axis, '~/status_raw', 1)
+        self.axis_status_pub = self.create_publisher(CameraSettings, '~/status', 1)
+        self.axis_status_raw_pub = self.create_publisher(CameraSettings, '~/status_raw', 1)
 
     def handlePtzStoppedMoving(self):
         if self.ptz.isMoving():
@@ -475,7 +475,7 @@ class AxisPtz(Node):
             0.0
         ]
 
-        axis_status_raw_msg = Axis()
+        axis_status_raw_msg = CameraSettings()
         axis_status_raw_msg.pan = float(self.ptz.pan.getRawCurrentPosition())
         axis_status_raw_msg.tilt = float(self.ptz.tilt.getRawCurrentPosition())
         axis_status_raw_msg.zoom = float(self.ptz.zoom.getRawCurrentPosition())
