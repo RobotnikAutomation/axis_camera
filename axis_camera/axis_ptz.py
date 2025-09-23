@@ -32,6 +32,7 @@
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+from itertools import count
 from math import pi as PI
 from copy import deepcopy
 
@@ -117,7 +118,7 @@ class AxisPtz(Node):
 
     def rosReadParams(self):
         """ Reads parameters from the ROS parameter server."""
-        hostname = self.readParam('hostname', '192.168.0.185')
+        hostname = self.readParam('hostname', '')
         camera_number = self.readParam('camera_number', 1)
         self.desired_freq = self.readParam('desired_freq', 20.0)
         connection_timeout = self.readParam('connection_timeout', 5.0)
@@ -147,16 +148,26 @@ class AxisPtz(Node):
             self.readParam('zoom.max_augment', 30.0)
         )
 
-        ptz_connected = False
-        while not ptz_connected and rclpy.ok():
+        count = 0
+        while rclpy.ok():
+            # Check if hostname is empty to avoid trying to connect indefinitely
+            if hostname == '' or hostname is None:
+                self.get_logger().error('No hostname provided for PTZ camera')
+                time.sleep(5)
+                continue
+
+            # Initialize the PTZ camera with the provided parameters
             try:
-                self.get_logger().info(f'Connecting to PTZ camera {hostname}...')
-                # Initialize the PTZ camera with the provided parameters
+                self.get_logger().debug(f'Trying to connect to PTZ camera {hostname} (attempt {count+1})')
                 self.ptz = Ptz(hostname, camera_number, pan, tilt, zoom, connection_timeout)
-                ptz_connected = True
-                self.get_logger().info(f'Successfully connected to PTZ camera {hostname}')
+                self.get_logger().info(f'Successfully retrieved parameters from PTZ camera {hostname}')
+                break
+
             except Exception as e:
-                self.get_logger().error(f'Error connecting to PTZ camera: {e}')
+                self.get_logger().error(f'Error retrieving PTZ info: {e}')
+                wait_time = 5 + count*5 if count < 6 else 30
+                count += 1
+                time.sleep(wait_time)
 
         camera_not_moving_timeout = self.readParam('camera_not_moving_timeout', 3.0)
         last_position_command_timeout = self.readParam('last_position_command_timeout', 10.0)

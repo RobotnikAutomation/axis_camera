@@ -168,7 +168,7 @@ class AxisStream(Node):
         stamp = self.get_clock().now().to_msg()
 
         if self.publish_img:
-            msg = self.convertToROSImage(image, "rgb8")
+            msg = self.convertToROSImage(image, encoding="bgr8")
             self.image_publisher.publish(msg)
 
         if self.publish_compressed_img:
