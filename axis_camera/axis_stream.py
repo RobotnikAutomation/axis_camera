@@ -64,9 +64,8 @@ class AxisStream(Node):
             'resolution': self.resolution
         })
 
-        self.url = self.streamer.getUrl()
         self.run_camera = False
-        self.get_logger().info(f"Axis camera stream URL: {self.url}")
+        self.get_logger().info(f"Axis camera stream URL: {self.streamer.getUrl()}")
         self.publish_cam_info = False
         self.publish_img = False
         self.publish_compressed_img = False
@@ -164,20 +163,22 @@ class AxisStream(Node):
             self.publishCamera()
 
     def publishCamera(self):
-        image = self.streamer.getImage()
         stamp = self.get_clock().now().to_msg()
 
-        if self.publish_img:
-            msg = self.convertToROSImage(image, encoding="bgr8")
-            self.image_publisher.publish(msg)
+        if self.publish_compressed_img or self.publish_img:
+            image = self.streamer.getImage()
 
-        if self.publish_compressed_img:
-            compressed_msg = CompressedImage()
-            compressed_msg.header.stamp =stamp
-            compressed_msg.header.frame_id = self.axis_frame_id
-            compressed_msg.format = 'jpeg'
-            compressed_msg.data = image
-            self.compressed_image_publisher.publish(compressed_msg)
+            if self.publish_img:
+                msg = self.convertToROSImage(image, encoding="bgr8")
+                self.image_publisher.publish(msg)
+
+            if self.publish_compressed_img:
+                compressed_msg = CompressedImage()
+                compressed_msg.header.stamp = stamp
+                compressed_msg.header.frame_id = self.axis_frame_id
+                compressed_msg.format = 'jpeg'
+                compressed_msg.data = image
+                self.compressed_image_publisher.publish(compressed_msg)
 
         if self.publish_cam_info:
             camera_info_msg = self.camera_info.getCameraInfo()
