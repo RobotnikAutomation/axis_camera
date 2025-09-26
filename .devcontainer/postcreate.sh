@@ -28,7 +28,7 @@ if [ $counter -eq 5 ]; then
 fi
 
 git clone https://github.com/RobotnikAutomation/robotnik_common.git /home/robot/robot_ws/src/robotnik_common
-git clone -b  feat/robotnik-actuators-and-sensors-msgs https://github.com/RobotnikAutomation/robotnik_interfaces.git /home/robot/robot_ws/src/robotnik_interfaces
+git clone https://github.com/RobotnikAutomation/robotnik_interfaces.git /home/robot/robot_ws/src/robotnik_interfaces
 
 rosdep install --from-paths ./src --ignore-src -y -r
 
