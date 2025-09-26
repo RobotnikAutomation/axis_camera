@@ -7,6 +7,7 @@ import requests
 
 class StreamAxis():
     def __init__(self, args):
+        self.url_response = None
         self.hostname = args['hostname']
         self.camera_number = args['camera_number']
         self.fps = args['fps']
@@ -78,7 +79,7 @@ class StreamAxis():
         error_msg = ''
         try:
             req = urllib_request.Request(self._url)
-            self.fp = urllib_request.urlopen(req, timeout=self.timeout)
+            self.url_response = urllib_request.urlopen(req, timeout=self.timeout)
     
         except Exception as e:
             error = True
@@ -99,13 +100,13 @@ class StreamAxis():
 
         content_length = int(header['Content-Length'])
         #print('Length = %d'%content_length)
-        img = self.fp.read(content_length)
+        img = self.url_response.read(content_length)
         line = self.readLine()
         return img
 
     def readLine(self):
         try:
-            line = self.fp.readline().decode()
+            line = self.url_response.readline().decode()
         except:
-            line = self.fp.readline()
+            line = self.url_response.readline()
         return line
