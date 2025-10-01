@@ -50,7 +50,8 @@ class AxisStream(Node):
         It reads the stream and publishes the images to a topic.
     """
     def __init__(self):
-        super().__init__('axis_stream_node')
+        # TODO: enable_rosout is set to False to avoid issues with zenoh #17
+        super().__init__('axis_stream_node', enable_rosout=False)
 
         self.rosReadParams()
         self.streamer = StreamAxis({
