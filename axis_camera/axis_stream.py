@@ -72,6 +72,7 @@ class AxisStream(Node):
         self.publish_img = False
         self.publish_compressed_img = False
         self.image_received = False
+        self.last_published_timestamp = None
 
         self.bridge = CvBridge()
 
@@ -167,8 +168,15 @@ class AxisStream(Node):
         if not self.streamer.is_connected:
             error, error_msg = self.streamer.stream()
             if error:
-                self.get_logger().error(f"stream:: Error streaming from Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {error_msg}")
+                # Only log error once per connection failure, not every control loop iteration
+                if not hasattr(self, '_last_connection_error') or self._last_connection_error != error_msg:
+                    self.get_logger().error(f"stream:: Error streaming from Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {error_msg}")
+                    self._last_connection_error = error_msg
                 return
+            else:
+                # Clear error flag on successful connection
+                if hasattr(self, '_last_connection_error'):
+                    delattr(self, '_last_connection_error')
         
         # Ensure receiver thread is running
         if not self.streamer.thread_running:
@@ -191,17 +199,28 @@ class AxisStream(Node):
                 self.get_logger().warn(f"publishCamera:: No image available from camera {self.camera_id}", throttle_duration_sec=1.0)
                 return
             
+            # Check if this is the same image as the last published one (avoid republishing duplicates)
+            if image_timestamp is not None and self.last_published_timestamp is not None:
+                if abs(image_timestamp - self.last_published_timestamp) < 0.001:  # Same timestamp within 1ms
+                    return  # Drop duplicate image
+            
             if not self.image_received:
                 self.get_logger().info(f"publishCamera:: Image received from camera {self.camera_id}")
                 self.image_received = True
             
-            # Use the image timestamp from the receiver thread
+            # Convert the image timestamp from time.time() to ROS2 timestamp
             if image_timestamp is not None:
-                stamp = self.get_clock().now().to_msg()  # Could use image_timestamp for more precise timing
+                # Convert Unix timestamp to ROS2 Time
+                ros_time = rclpy.time.Time(seconds=int(image_timestamp), nanoseconds=int((image_timestamp % 1) * 1e9))
+                stamp = ros_time.to_msg()
+                # Update last published timestamp
+                self.last_published_timestamp = image_timestamp
 
             if self.publish_img:
                 msg = self.convertToROSImage(image, encoding="bgr8")
                 if msg is not None:
+                    msg.header.stamp = stamp
+                    msg.header.frame_id = self.axis_frame_id
                     self.image_publisher.publish(msg)
 
             if self.publish_compressed_img:
@@ -234,7 +253,9 @@ class AxisStream(Node):
                 self.get_logger().error("convertToROSImage:: Failed to decode image")
                 return None
             
-            return self.bridge.cv2_to_imgmsg(cv_image, encoding = encoding)
+            ros_image = self.bridge.cv2_to_imgmsg(cv_image, encoding = encoding)
+            # Header will be set in publishCamera method
+            return ros_image
         except Exception as e:
             self.get_logger().error(f"convertToROSImage:: Error converting image: {e}")
             return None
@@ -269,6 +290,8 @@ class AxisStream(Node):
                 self.get_logger().info("checkSubscriberCount:: No subscribers, stopping receiver thread and disconnecting")
                 self.streamer.stopReceiverThread()
                 self.streamer.disconnect()
+                # Reset last published timestamp when stopping camera
+                self.last_published_timestamp = None
 
         self.run_camera = run_camera
         self.publish_cam_info = publish_cam_info

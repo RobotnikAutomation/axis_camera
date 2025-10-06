@@ -42,8 +42,8 @@ class StreamAxis():
         # Connection state management
         self.is_connected = False
         self.reconnection_attempts = 0
-        self.max_reconnection_delay = 60.0  # Max backoff delay in seconds
-        self.base_reconnection_delay = 1.0  # Base delay for exponential backoff
+        self.max_reconnection_delay = 10.0  # Max backoff delay in seconds
+        self.base_reconnection_delay = 0.5  # Base delay for exponential backoff
         self.last_reconnection_attempt = 0
         
         # Max buffering time parameter (default 1 second)
