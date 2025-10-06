@@ -36,7 +36,7 @@ def generate_launch_description():
     args.append(camera_id_arg)
     camera_number_arg = DeclareLaunchArgument(
         'camera_number',
-        default_value='0'
+        default_value='1'
     )
     args.append(camera_number_arg)
     fps_arg = DeclareLaunchArgument(
