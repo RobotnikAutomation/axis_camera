@@ -5,6 +5,7 @@ except:
 
 import requests
 import time
+import threading
 
 class StreamAxis():
     def __init__(self, args):
@@ -47,6 +48,13 @@ class StreamAxis():
         
         # Max buffering time parameter (default 1 second)
         self.max_buffering_time = args.get('max_buffering_time', 1.0)
+        
+        # Thread-based image buffering
+        self.buffer_lock = threading.Lock()
+        self.latest_image = None
+        self.latest_image_timestamp = None
+        self.receiver_thread = None
+        self.thread_running = False
 
     def getSupportedImageFormats(self):
         query = {}
@@ -124,6 +132,9 @@ class StreamAxis():
         """
         Closes the connection to the camera stream.
         """
+        # Stop the receiver thread first
+        self.stopReceiverThread()
+        
         if self.url_response is not None:
             try:
                 self.url_response.close()
@@ -140,16 +151,85 @@ class StreamAxis():
         error = not self.connect()
         error_msg = '' if not error else f"Failed to connect after {self.reconnection_attempts} attempts"
         return error, error_msg
-
-    def getImage(self):
+    
+    def startReceiverThread(self):
         """
-        Reads an image from the stream.
-        Ensures that buffering time does not exceed max_buffering_time.
-        Returns the image bytes or None if connection failed.
+        Starts the background thread that receives images from the camera.
+        Should be called when subscribers are detected.
         """
-        if not self.is_connected:
-            if not self.connect():
-                return None
+        if self.receiver_thread is not None and self.thread_running:
+            return  # Thread already running
+        
+        if not self.connect():
+            print("Failed to connect before starting receiver thread")
+            return
+        
+        self.thread_running = True
+        self.receiver_thread = threading.Thread(target=self._imageReceiverLoop, daemon=True)
+        self.receiver_thread.start()
+        print("Image receiver thread started")
+    
+    def stopReceiverThread(self):
+        """
+        Stops the background thread that receives images from the camera.
+        Should be called when no more subscribers.
+        """
+        if self.receiver_thread is None or not self.thread_running:
+            return  # Thread not running
+        
+        self.thread_running = False
+        if self.receiver_thread is not None:
+            self.receiver_thread.join(timeout=2.0)
+            self.receiver_thread = None
+        
+        # Clear the buffer
+        with self.buffer_lock:
+            self.latest_image = None
+            self.latest_image_timestamp = None
+        
+        print("Image receiver thread stopped")
+    
+    def _imageReceiverLoop(self):
+        """
+        Background thread loop that continuously receives images from the camera stream.
+        Updates the buffer with the latest image and timestamp.
+        """
+        print("Image receiver loop started")
+        
+        while self.thread_running:
+            try:
+                if not self.is_connected:
+                    if not self.connect():
+                        time.sleep(0.1)
+                        continue
+                
+                # Read one image from the stream
+                image_data = self._readOneImage()
+                
+                if image_data is not None:
+                    # Update the buffer with the latest image
+                    with self.buffer_lock:
+                        self.latest_image = image_data
+                        self.latest_image_timestamp = time.time()
+                else:
+                    # Failed to read image, disconnect and retry
+                    self.disconnect()
+                    time.sleep(0.1)
+                    
+            except Exception as e:
+                print(f"Error in image receiver loop: {e}")
+                self.disconnect()
+                time.sleep(0.1)
+        
+        print("Image receiver loop stopped")
+    
+    def _readOneImage(self):
+        """
+        Reads one image from the stream (used by background thread).
+        Returns the image bytes or None if failed.
+        """
+        if not self.is_connected or self.url_response is None:
+            return None
         
         try:
             start_time = time.time()
@@ -157,7 +237,6 @@ class StreamAxis():
             # Read boundary
             boundary = self.readLine()
             if not boundary:
-                self.disconnect()
                 return None
             
             # Read headers
@@ -173,11 +252,9 @@ class StreamAxis():
                 # Check if we're exceeding max buffering time
                 if time.time() - start_time > self.max_buffering_time:
                     print(f"Warning: Header reading exceeded max buffering time ({self.max_buffering_time}s)")
-                    self.disconnect()
                     return None
             
             if 'Content-Length' not in header:
-                self.disconnect()
                 return None
             
             content_length = int(header['Content-Length'])
@@ -196,9 +273,17 @@ class StreamAxis():
             return img
             
         except Exception as e:
-            print(f"Error reading image: {e}")
-            self.disconnect()
+            print(f"Error reading image in background thread: {e}")
             return None
+
+    def getImage(self):
+        """
+        Returns the latest received image from the buffer along with its timestamp.
+        This is now a non-blocking operation that just reads from the buffer.
+        Returns tuple (image_bytes, timestamp) or (None, None) if no image available.
+        """
+        with self.buffer_lock:
+            return self.latest_image, self.latest_image_timestamp
 
     def readLine(self):
         """

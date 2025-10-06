@@ -159,7 +159,7 @@ class AxisStream(Node):
 
     def stream(self):
         """
-        Ensures the stream connection is established.
+        Ensures the stream connection is established and receiver thread is running.
         Only attempts to connect if not already connected, avoiding reconnection every loop.
         """
         # Only attempt to connect if not already connected
@@ -169,6 +169,10 @@ class AxisStream(Node):
                 self.get_logger().error(f"stream:: Error streaming from Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {error_msg}")
                 return
         
+        # Ensure receiver thread is running
+        if not self.streamer.thread_running:
+            self.streamer.startReceiverThread()
+        
         # Connection is established, publish camera data
         self.publishCamera()
 
@@ -176,12 +180,17 @@ class AxisStream(Node):
         stamp = self.get_clock().now().to_msg()
 
         if self.publish_compressed_img or self.publish_img:
-            image = self.streamer.getImage()
+            # Get the latest image from the buffer (non-blocking)
+            image, image_timestamp = self.streamer.getImage()
             
             # Handle connection failure or timeout
             if image is None:
-                self.get_logger().warn(f"publishCamera:: Failed to get image from camera {self.camera_id}")
+                self.get_logger().warn(f"publishCamera:: No image available from camera {self.camera_id}", throttle_duration_sec=1.0)
                 return
+            
+            # Use the image timestamp from the receiver thread
+            if image_timestamp is not None:
+                stamp = self.get_clock().now().to_msg()  # Could use image_timestamp for more precise timing
 
             if self.publish_img:
                 msg = self.convertToROSImage(image, encoding="bgr8")
@@ -244,8 +253,13 @@ class AxisStream(Node):
             action = "Starting" if run_camera else "Stopping"
             self.get_logger().info(f"checkSubscriberCount:: {action} camera stream")
             
-            # Disconnect when stopping to release resources
-            if not run_camera:
+            # Start or stop receiver thread based on subscription status
+            if run_camera:
+                # Will start thread in stream() method when needed
+                pass
+            else:
+                # Stop receiver thread when no subscribers
+                self.streamer.stopReceiverThread()
                 self.streamer.disconnect()
 
         self.run_camera = run_camera
@@ -263,6 +277,7 @@ class AxisStream(Node):
         Cleanup when node is destroyed.
         """
         self.get_logger().info("destroy_node:: Shutting down and disconnecting from camera")
+        self.streamer.stopReceiverThread()
         self.streamer.disconnect()
         super().destroy_node()
 
