@@ -167,7 +167,6 @@ class StreamAxis():
         self.thread_running = True
         self.receiver_thread = threading.Thread(target=self._imageReceiverLoop, daemon=True)
         self.receiver_thread.start()
-        print("Image receiver thread started")
     
     def stopReceiverThread(self):
         """
@@ -186,15 +185,12 @@ class StreamAxis():
         with self.buffer_lock:
             self.latest_image = None
             self.latest_image_timestamp = None
-        
-        print("Image receiver thread stopped")
     
     def _imageReceiverLoop(self):
         """
         Background thread loop that continuously receives images from the camera stream.
         Updates the buffer with the latest image and timestamp.
         """
-        print("Image receiver loop started")
         
         while self.thread_running:
             try:
@@ -220,8 +216,6 @@ class StreamAxis():
                 print(f"Error in image receiver loop: {e}")
                 self.disconnect()
                 time.sleep(0.1)
-        
-        print("Image receiver loop stopped")
     
     def _readOneImage(self):
         """

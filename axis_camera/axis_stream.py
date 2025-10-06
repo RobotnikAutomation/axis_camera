@@ -71,6 +71,7 @@ class AxisStream(Node):
         self.publish_cam_info = False
         self.publish_img = False
         self.publish_compressed_img = False
+        self.image_received = False
 
         self.bridge = CvBridge()
 
@@ -171,6 +172,7 @@ class AxisStream(Node):
         
         # Ensure receiver thread is running
         if not self.streamer.thread_running:
+            self.get_logger().info(f"stream:: Starting receiver thread for Axis camera {self.camera_id} ({self.hostname}:{self.camera_number})")
             self.streamer.startReceiverThread()
         
         # Connection is established, publish camera data
@@ -185,8 +187,13 @@ class AxisStream(Node):
             
             # Handle connection failure or timeout
             if image is None:
+                self.image_received = False
                 self.get_logger().warn(f"publishCamera:: No image available from camera {self.camera_id}", throttle_duration_sec=1.0)
                 return
+            
+            if not self.image_received:
+                self.get_logger().info(f"publishCamera:: Image received from camera {self.camera_id}")
+                self.image_received = True
             
             # Use the image timestamp from the receiver thread
             if image_timestamp is not None:
@@ -259,6 +266,7 @@ class AxisStream(Node):
                 pass
             else:
                 # Stop receiver thread when no subscribers
+                self.get_logger().info("checkSubscriberCount:: No subscribers, stopping receiver thread and disconnecting")
                 self.streamer.stopReceiverThread()
                 self.streamer.disconnect()
 
