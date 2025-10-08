@@ -6,6 +6,12 @@ except:
 import requests
 import time
 import threading
+import sys
+import termios
+import fcntl
+import array
+
+FIONREAD = 0x541B if sys.platform.startswith("linux") else termios.FIONREAD
 
 class StreamAxis():
     def __init__(self, args):
@@ -263,7 +269,17 @@ class StreamAxis():
             total_time = time.time() - start_time
             if total_time > self.max_buffering_time:
                 print(f"Warning: Image retrieval took {total_time:.3f}s, exceeding max buffering time ({self.max_buffering_time}s)")
-            
+
+            # Check queue size (if possible)
+            fd = self.url_response.fp.raw.fileno()
+            if fd:
+                n = array.array('i', [0])
+                fcntl.ioctl(fd, FIONREAD, n)
+                bytes_in_recvq = n[0]
+                # Check if bytes in recv is reaching high limit
+                if bytes_in_recvq > content_length * 3:
+                    print(f"WARN: bytes in recv queue: {bytes_in_recvq}. Delay in processing, decrease fps or increase processing speed.", file=sys.stderr)
+
             return img
             
         except Exception as e:
