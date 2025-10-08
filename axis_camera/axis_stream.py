@@ -62,7 +62,8 @@ class AxisStream(Node):
             'profile': self.profile,
             'timeout': self.timeout,
             'videocodec': self.videocodec,
-            'resolution': self.resolution
+            'resolution': self.resolution,
+            'max_buffering_time': self.max_buffering_time
         })
 
         self.run_camera = False
@@ -70,6 +71,8 @@ class AxisStream(Node):
         self.publish_cam_info = False
         self.publish_img = False
         self.publish_compressed_img = False
+        self.image_received = False
+        self.last_published_timestamp = None
 
         self.bridge = CvBridge()
 
@@ -129,6 +132,7 @@ class AxisStream(Node):
         self.initialization_delay = self.readParam('initialization_delay', 0.0)
         self.reconnection_time = self.readParam('reconnection_time', 5.0)
         self.desired_freq = self.readParam('desired_freq', 30.0)
+        self.max_buffering_time = self.readParam('max_buffering_time', 1.0)
 
     def rosSetup(self):
         """
@@ -156,22 +160,68 @@ class AxisStream(Node):
                 self.get_clock().sleep_for(rclpy.duration.Duration(seconds=self.reconnection_time))
 
     def stream(self):
-        error, error_msg = self.streamer.stream()
-        if error:
-            self.get_logger().error(f"stream:: Error streaming from Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {error_msg}")
-            return
-        else:
-            self.publishCamera()
+        """
+        Ensures the stream connection is established and receiver thread is running.
+        Only attempts to connect if not already connected, avoiding reconnection every loop.
+        """
+        # Only attempt to connect if not already connected
+        if not self.streamer.is_connected:
+            error, error_msg = self.streamer.stream()
+            if error:
+                # Only log error once per connection failure, not every control loop iteration
+                if not hasattr(self, '_last_connection_error') or self._last_connection_error != error_msg:
+                    self.get_logger().error(f"stream:: Error streaming from Axis camera {self.camera_id} ({self.hostname}:{self.camera_number}): {error_msg}")
+                    self._last_connection_error = error_msg
+                return
+            else:
+                # Clear error flag on successful connection
+                if hasattr(self, '_last_connection_error'):
+                    delattr(self, '_last_connection_error')
+        
+        # Ensure receiver thread is running
+        if not self.streamer.thread_running:
+            self.get_logger().info(f"stream:: Starting receiver thread for Axis camera {self.camera_id} ({self.hostname}:{self.camera_number})")
+            self.streamer.startReceiverThread()
+        
+        # Connection is established, publish camera data
+        self.publishCamera()
 
     def publishCamera(self):
         stamp = self.get_clock().now().to_msg()
 
         if self.publish_compressed_img or self.publish_img:
-            image = self.streamer.getImage()
+            # Get the latest image from the buffer (non-blocking)
+            image, image_timestamp = self.streamer.getImage()
+            
+            # Handle connection failure or timeout
+            if image is None:
+                self.image_received = False
+                self.get_logger().warn(f"publishCamera:: No image available from camera {self.camera_id}", throttle_duration_sec=1.0)
+                return
+            
+            # Check if this is the same image as the last published one (avoid republishing duplicates)
+            if image_timestamp is not None and self.last_published_timestamp is not None:
+                if abs(image_timestamp - self.last_published_timestamp) < 0.001:  # Same timestamp within 1ms
+                    return  # Drop duplicate image
+            
+            if not self.image_received:
+                self.get_logger().info(f"publishCamera:: Image received from camera {self.camera_id}")
+                self.image_received = True
+            
+            # Convert the image timestamp from time.time() to ROS2 timestamp
+            if image_timestamp is not None:
+                # Convert Unix timestamp to ROS2 Time
+                ros_time = rclpy.time.Time(seconds=int(image_timestamp), nanoseconds=int((image_timestamp % 1) * 1e9))
+                stamp = ros_time.to_msg()
+                # Update last published timestamp
+                self.last_published_timestamp = image_timestamp
 
             if self.publish_img:
                 msg = self.convertToROSImage(image, encoding="bgr8")
-                self.image_publisher.publish(msg)
+                if msg is not None:
+                    msg.header.stamp = stamp
+                    msg.header.frame_id = self.axis_frame_id
+                    self.image_publisher.publish(msg)
 
             if self.publish_compressed_img:
                 compressed_msg = CompressedImage()
@@ -193,12 +243,22 @@ class AxisStream(Node):
         
         :param image: bytes array representing the image
         :param encoding: Encoding type (e.g., "bgr8", "mono8")
-        :return: ROS Image message
+        :return: ROS Image message or None if conversion fails
         """
-        np_array = np.frombuffer(image, np.uint8)
-        cv_image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
-
-        return self.bridge.cv2_to_imgmsg(cv_image, encoding = encoding)
+        try:
+            np_array = np.frombuffer(image, np.uint8)
+            cv_image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+            
+            if cv_image is None:
+                self.get_logger().error("convertToROSImage:: Failed to decode image")
+                return None
+            
+            ros_image = self.bridge.cv2_to_imgmsg(cv_image, encoding = encoding)
+            # Header will be set in publishCamera method
+            return ros_image
+        except Exception as e:
+            self.get_logger().error(f"convertToROSImage:: Error converting image: {e}")
+            return None
 
     def checkSubscriberCount(self):
         """
@@ -220,6 +280,18 @@ class AxisStream(Node):
         if not self.run_camera == run_camera:
             action = "Starting" if run_camera else "Stopping"
             self.get_logger().info(f"checkSubscriberCount:: {action} camera stream")
+            
+            # Start or stop receiver thread based on subscription status
+            if run_camera:
+                # Will start thread in stream() method when needed
+                pass
+            else:
+                # Stop receiver thread when no subscribers
+                self.get_logger().info("checkSubscriberCount:: No subscribers, stopping receiver thread and disconnecting")
+                self.streamer.stopReceiverThread()
+                self.streamer.disconnect()
+                # Reset last published timestamp when stopping camera
+                self.last_published_timestamp = None
 
         self.run_camera = run_camera
         self.publish_cam_info = publish_cam_info
@@ -230,4 +302,14 @@ class AxisStream(Node):
         if not subs_now == subs_before:
             string = "Subscribers" if subs_now else "No more subscribers"
             self.get_logger().info(f"subscriberTransitionLogger:: {string} detected on topic {topic_name}")
+
+    def destroy_node(self):
+        """
+        Cleanup when node is destroyed.
+        """
+        self.get_logger().info("destroy_node:: Shutting down and disconnecting from camera")
+        self.streamer.stopReceiverThread()
+        self.streamer.disconnect()
+        super().destroy_node()
+
 
