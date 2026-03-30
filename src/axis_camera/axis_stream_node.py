@@ -42,6 +42,8 @@ import camera_info_manager
 
 import diagnostic_updater
 import diagnostic_msgs
+from axis_camera.srv import get_device_info, get_device_infoResponse
+from axis_camera.axis_lib.device_info import get_device_info_with_fallback
 from axis_camera.axis_lib.axis_stream import StreamAxis
 
 
@@ -96,6 +98,12 @@ class Axis():
         self.error_reading_msg = ''
 
         self.streamer = StreamAxis(args_streamer)
+        
+        # Device info
+        self.timeout = 5
+        self.device_model = 'unknown'
+        self.device_serial = 'unknown'
+        self.device_firmware = 'unknown'
 
     def rosSetup(self):
         """
@@ -116,6 +124,12 @@ class Axis():
 
         rospy.loginfo('Axis:rosSetup: Camera %s (%s:%d): url = %s' %
                       (self.camera_model, self.hostname, self.camera_number, self.url))
+
+        # Device info
+        self.loadDeviceInfo()
+        self.device_info_service = rospy.Service('/get_device_info', get_device_info, self.getDeviceInfoServiceCb)
+        rospy.loginfo('%s: device info model=%s serial=%s firmware=%s' %
+                      (rospy.get_name(), self.device_model, self.device_serial, self.device_firmware))
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -175,6 +189,31 @@ class Axis():
         if self.subscribers == 0 and self.run_camera:
             rospy.loginfo('Axis:peer_unsubscribe: %s. Stop reading from camera' % (rospy.get_name()))
             self.run_camera = False
+
+    def loadDeviceInfo(self):
+        """Load device info using shared device_info module"""
+        info = get_device_info_with_fallback(
+            self.hostname,
+            timeout=self.timeout,
+            enable_auth=self.enable_auth,
+            username=self.username,
+            password=self.password,
+            logger=rospy.logwarn
+        )
+        self.device_model = info.get('model', 'unknown')
+        self.device_serial = info.get('serial', 'unknown')
+        self.device_firmware = info.get('firmware', 'unknown')
+
+        rospy.set_param('~device/model', self.device_model)
+        rospy.set_param('~device/serial', self.device_serial)
+        rospy.set_param('~device/firmware', self.device_firmware)
+
+    def getDeviceInfoServiceCb(self, req):
+        return get_device_infoResponse(
+            model=self.device_model,
+            serial=self.device_serial,
+            firmware=self.device_firmware
+        )
 
     def stream(self):
         """

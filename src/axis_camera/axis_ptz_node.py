@@ -45,8 +45,10 @@ from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
 import diagnostic_updater
 import diagnostic_msgs
+from axis_camera.srv import get_device_info, get_device_infoResponse
 
 from axis_camera.axis_lib.axis_control import ControlAxis
+from axis_camera.axis_lib.device_info import get_device_info_with_fallback
 
 class AxisPTZ(threading.Thread):
     """
@@ -57,6 +59,9 @@ class AxisPTZ(threading.Thread):
         self.hostname = args['hostname']
         self.camera_id = args['camera_id']
         self.camera_model = args['camera_model']
+        self.username = args['username']
+        self.password = args['password']
+        self.enable_auth = args['enable_auth']
         self.rate = args['ptz_rate']
         self.autoflip = args['autoflip']
         self.eflip = args['eflip']
@@ -123,6 +128,10 @@ class AxisPTZ(threading.Thread):
         self.control_mode = 'position'
         self.t_last_command_sent = rospy.Time(0)
         self.t_control_loop = 1 / self.rate
+        self.timeout = 5
+        self.device_model = 'unknown'
+        self.device_serial = 'unknown'
+        self.device_firmware = 'unknown'
 
     def rosSetup(self):
         """
@@ -137,6 +146,8 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
+        self.loadDeviceInfo()
+        self.device_info_service = rospy.Service('/get_device_info', get_device_info, self.getDeviceInfoServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -148,6 +159,34 @@ class AxisPTZ(threading.Thread):
         self.zoom_augments = []
         for i in range(int(self.min_zoom_augment), int(self.max_zoom_augment) + 1, int(self.min_zoom_step)):
             self.zoom_augments.append(i)
+
+        rospy.loginfo('%s: device info model=%s serial=%s firmware=%s' %
+                      (rospy.get_name(), self.device_model, self.device_serial, self.device_firmware))
+
+    def loadDeviceInfo(self):
+        """Load device info using shared device_info module"""
+        info = get_device_info_with_fallback(
+            self.hostname,
+            timeout=self.timeout,
+            enable_auth=self.enable_auth,
+            username=self.username,
+            password=self.password,
+            logger=rospy.logwarn
+        )
+        self.device_model = info.get('model', 'unknown')
+        self.device_serial = info.get('serial', 'unknown')
+        self.device_firmware = info.get('firmware', 'unknown')
+
+        rospy.set_param('~device/model', self.device_model)
+        rospy.set_param('~device/serial', self.device_serial)
+        rospy.set_param('~device/firmware', self.device_firmware)
+
+    def getDeviceInfoServiceCb(self, req):
+        return get_device_infoResponse(
+            model=self.device_model,
+            serial=self.device_serial,
+            firmware=self.device_firmware
+        )
 
     def commandPTZCb(self, msg):
         """
@@ -515,6 +554,9 @@ def main():
     # default params
     arg_defaults = {
         'hostname': '192.168.1.205',
+        'username': 'root',
+        'password': 'R0b0tn1K',
+        'enable_auth': True,
         'camera_id': 'XXXX',  # internal id (if necessary)
         'camera_model': 'axis_m5525',
         'autoflip': False,
