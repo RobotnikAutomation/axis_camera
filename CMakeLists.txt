@@ -33,6 +33,8 @@ FILES
 add_service_files(DIRECTORY srv
 FILES
    set_ptz.srv
+  set_focus.srv
+  set_iris.srv
    set_digital_output.srv
 )
 

@@ -40,6 +40,8 @@ import rospy
 from std_srvs.srv import Empty
 from sensor_msgs.msg import JointState
 
+from axis_camera.srv import set_focus, set_focusResponse
+from axis_camera.srv import set_iris, set_irisResponse
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
@@ -104,8 +106,16 @@ class AxisPTZ(threading.Thread):
         self.desired_pan = 0.0
         self.desired_tilt = 0.0
         self.desired_zoom = 0.0
+        self.desired_focus = 0.0
+        self.desired_autofocus = False
+        self.desired_iris = 0.0
+        self.desired_autoiris = False
         self.error_reading = False
         self.error_reading_msg = ''
+        self.focus_supported = True
+        self.iris_supported = True
+        self.focus_support_warned = False
+        self.iris_support_warned = False
 
         # Timer to get/release ptz control
         if(self.use_control_timeout):
@@ -128,8 +138,7 @@ class AxisPTZ(threading.Thread):
         """
                 Sets the ros connections
         """
-        ns = rospy.get_namespace()
-        #self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
+        self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
@@ -137,6 +146,8 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
+        self.focus_service = rospy.Service('~set_focus', set_focus, self.setFocusService)
+        self.iris_service = rospy.Service('~set_iris', set_iris, self.setIrisService)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -275,6 +286,10 @@ class AxisPTZ(threading.Thread):
             self.desired_pan = self.invert_pan*self.current_ptz.pan 
             self.desired_tilt = self.invert_tilt*self.current_ptz.tilt
             self.desired_zoom = self.current_ptz.zoom
+            self.desired_focus = self.current_ptz.focus
+            self.desired_autofocus = self.current_ptz.autofocus
+            self.desired_iris = self.current_ptz.iris
+            self.desired_autoiris = self.current_ptz.autoiris
 
         
 
@@ -326,6 +341,110 @@ class AxisPTZ(threading.Thread):
             rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(), control['error_msg']))
         
         self.t_last_command_sent = rospy.Time.now()
+
+    def setFocusService(self, req):
+        response = set_focusResponse()
+
+        if not self.ptz_syncronized:
+            response.ret = False
+            response.message = 'PTZ not synchronized yet'
+            rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
+            return response
+
+        if not self.focus_supported:
+            response.ret = False
+            response.message = 'Focus control not supported by this camera'
+            rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
+            return response
+
+        if not req.autofocus and not math.isfinite(req.focus):
+            response.ret = False
+            response.message = 'Invalid focus value'
+            rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
+            return response
+
+        focus_value = None if req.autofocus else req.focus
+        control = self.controller.sendPTZCommand(focus=focus_value, autofocus=req.autofocus)
+        if not self._commandSucceeded(control, 'focus'):
+            response.ret = False
+            response.message = self._formatCommandError(control, 'focus')
+            return response
+
+        self.desired_autofocus = req.autofocus
+        if focus_value is not None:
+            self.desired_focus = focus_value
+
+        response.ret = True
+        response.message = 'Focus command sent'
+        return response
+
+    def setIrisService(self, req):
+        response = set_irisResponse()
+
+        if not self.ptz_syncronized:
+            response.ret = False
+            response.message = 'PTZ not synchronized yet'
+            rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
+            return response
+
+        if not self.iris_supported:
+            response.ret = False
+            response.message = 'Iris control not supported by this camera'
+            rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
+            return response
+
+        if not req.autoiris and not math.isfinite(req.iris):
+            response.ret = False
+            response.message = 'Invalid iris value'
+            rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
+            return response
+
+        iris_value = None if req.autoiris else req.iris
+        control = self.controller.sendPTZCommand(iris=iris_value, autoiris=req.autoiris)
+        if not self._commandSucceeded(control, 'iris'):
+            response.ret = False
+            response.message = self._formatCommandError(control, 'iris')
+            return response
+
+        self.desired_autoiris = req.autoiris
+        if iris_value is not None:
+            self.desired_iris = iris_value
+
+        response.ret = True
+        response.message = 'Iris command sent'
+        return response
+
+    def _commandSucceeded(self, control, feature_name):
+        if control['status'] == 204 and not control['exception']:
+            return True
+
+        message = self._formatCommandError(control, feature_name)
+        if control['exception']:
+            rospy.logerr('%s:%s command failed: %s', rospy.get_name(), feature_name, message)
+        else:
+            rospy.logwarn('%s:%s command failed: %s', rospy.get_name(), feature_name, message)
+        return False
+
+    def _formatCommandError(self, control, feature_name):
+        if control['exception']:
+            return str(control['error_msg'])
+
+        body = control.get('body', '')
+        if body:
+            return 'HTTP %s: %s' % (control['status'], body.strip())
+        return 'HTTP %s while sending %s command to %s%s' % (control['status'], feature_name, self.hostname, control.get('url', ''))
+
+    def _updateOptionalSupport(self, ptz_read):
+        self.focus_supported = ptz_read.get('supports_focus', False)
+        self.iris_supported = ptz_read.get('supports_iris', False)
+
+        if not self.focus_supported and not self.focus_support_warned:
+            rospy.logwarn('%s:getPTZState: camera does not report focus/autofocus support', rospy.get_name())
+            self.focus_support_warned = True
+
+        if not self.iris_supported and not self.iris_support_warned:
+            rospy.logwarn('%s:getPTZState: camera does not report iris/autoiris support', rospy.get_name())
+            self.iris_support_warned = True
             
     def getPTZState(self):
         """
@@ -335,6 +454,7 @@ class AxisPTZ(threading.Thread):
         # First time saves the current values
         ptz_read = self.controller.getPTZState()
         if not ptz_read["error_reading"]:
+            self._updateOptionalSupport(ptz_read)
 
             self.current_ptz.pan =  self.invert_pan * self.normalize_angle( ptz_read["pan"] - self.pan_offset)
             self.current_ptz.tilt = self.invert_tilt * (ptz_read["tilt"] - self.tilt_offset)
@@ -349,6 +469,10 @@ class AxisPTZ(threading.Thread):
                 self.desired_pan = self.invert_pan*self.current_ptz.pan 
                 self.desired_tilt = self.invert_tilt*self.current_ptz.tilt
                 self.desired_zoom = self.current_ptz.zoom
+                self.desired_focus = self.current_ptz.focus
+                self.desired_autofocus = self.current_ptz.autofocus
+                self.desired_iris = self.current_ptz.iris
+                self.desired_autoiris = self.current_ptz.autoiris
                 rospy.loginfo('%s:getPTZState: PTZ state syncronized!', rospy.get_name())
                 self.ptz_syncronized = True
             
@@ -416,7 +540,7 @@ class AxisPTZ(threading.Thread):
 
         self.zoom_parameter_pub.publish(zoom_parameters)
         # Publishes the current PTZ values
-        #self.pub.publish(self.current_ptz)
+        self.pub.publish(self.current_ptz)
         
         # Publish the joint state
         msg = JointState()

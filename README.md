@@ -91,3 +91,48 @@ relative: false"
 * params pan and tilt as float (radians)
 * param zoom as float (proportional zoom between min_zoom_augment and max_zoom_augment)
 * param relative as bool (increases the current pan,tilt,zoom relative to the current values)
+
+### Focus and iris services
+
+The PTZ node also exposes two additional services to control optics parameters.
+These services are independent from continuous PTZ command publishing.
+
+* `~set_focus` (`axis_camera/set_focus`)
+  * request fields:
+    * `focus` (`float32`): manual focus value
+    * `autofocus` (`bool`): if `true`, camera autofocus is enabled and `focus` value is ignored by the camera
+* `~set_iris` (`axis_camera/set_iris`)
+  * request fields:
+    * `iris` (`float32`): manual iris value
+    * `autoiris` (`bool`): if `true`, camera autoiris is enabled and `iris` value is ignored by the camera
+
+Examples:
+
+Enable autofocus:
+```
+rosservice call /axis_camera_ptz/set_focus "focus: 0.0
+autofocus: true"
+```
+
+Set manual focus:
+```
+rosservice call /axis_camera_ptz/set_focus "focus: 1200.0
+autofocus: false"
+```
+
+Enable autoiris:
+```
+rosservice call /axis_camera_ptz/set_iris "iris: 0.0
+autoiris: true"
+```
+
+Set manual iris:
+```
+rosservice call /axis_camera_ptz/set_iris "iris: 500.0
+autoiris: false"
+```
+
+Notes:
+
+* Service names depend on node namespace. Run `rosservice list` to get exact names in your setup.
+* Current `focus`, `autofocus`, `iris` and `autoiris` values are published in `~camera_params` (`robotnik_msgs/Axis`).
