@@ -23,16 +23,16 @@
 	<arg name="initialization_delay" default="0.0"/>
 
 	<param name="hostname" value="$(arg ip_address)"/>
--	<param name="username" value="$(arg username)" />
--	<param name="password" value="$(arg password)" />
+	<param name="username" value="$(arg username)" />
+	<param name="password" value="$(arg password)" />
 	<param name="node_name" value="$(arg node_name)"/> 
--	<param name="camera_number" value="$(arg camera_number)" />
--	<param name="camera_model" value="$(arg camera_model)"/>
--	<param name="camera_id" value="$(arg camera_id)"/>
--	<param name="fps" value="$(arg fps)"/>
--	<param name="compression" value="$(arg compression)"/>
--	<param name="frame" value="$(arg frame_id)"/>
--	<param name="profile" value="$(arg profile)"/>
+	<param name="camera_number" value="$(arg camera_number)" />
+	<param name="camera_model" value="$(arg camera_model)"/>
+	<param name="camera_id" value="$(arg camera_id)"/>
+	<param name="fps" value="$(arg fps)"/>
+	<param name="compression" value="$(arg compression)"/>
+	<param name="frame" value="$(arg frame_id)"/>
+	<param name="profile" value="$(arg profile)"/>
 	<param name="enable_auth" value="$(arg enable_auth)"/>
 	<param name="initialization_delay" value="$(arg initialization_delay)"/>
 
