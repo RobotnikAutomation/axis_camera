@@ -56,9 +56,9 @@ class ControlAxis():
                     params = dict([s.split('=',2) for s in body.splitlines()])
                 except:
                     params = dict([s.decode().split('=',2) for s in body.splitlines()])
-                pan = math.radians(float(params['pan']))
-                tilt = math.radians(float(params['tilt']))
-                
+                pan = math.radians(float(params['pan'])) if 'pan' in params else 0.0
+                tilt = math.radians(float(params['tilt'])) if 'tilt' in params else 0.0
+
                 if 'zoom' in params:
                     zoom = float(params['zoom'])
                 else:
@@ -102,6 +102,9 @@ class ControlAxis():
         except ValueError as e:
             ptz_read["error_reading"]= True
             ptz_read["error_reading_msg"] = e
+        except KeyError as e:
+            ptz_read["error_reading"]= True
+            ptz_read["error_reading_msg"] = "Missing expected field in PTZ response: %s" % e
         
         return ptz_read
 

@@ -5,6 +5,28 @@ try:
 except Exception:
     import http.client as httplib
 
+try:
+    from urllib.request import (
+        build_opener,
+        HTTPPasswordMgrWithDefaultRealm,
+        HTTPDigestAuthHandler,
+        HTTPBasicAuthHandler,
+        Request,
+        urlopen,
+    )
+    from urllib.error import HTTPError, URLError
+except Exception:
+    from urllib2 import (
+        build_opener,
+        HTTPPasswordMgrWithDefaultRealm,
+        HTTPDigestAuthHandler,
+        HTTPBasicAuthHandler,
+        Request,
+        urlopen,
+        HTTPError,
+        URLError,
+    )
+
 
 def _encode_basic_auth(username, password):
     auth_string = '%s:%s' % (username, password)
@@ -22,33 +44,77 @@ def _encode_basic_auth(username, password):
 
 
 def http_get(hostname, path, timeout=5, enable_auth=False, username='root', password='', logger=None):
-    headers = {}
-    if enable_auth:
-        headers = {'Authorization': _encode_basic_auth(username, password)}
+    url = 'http://%s%s' % (hostname, path)
+    request = Request(url)
 
-    conn = httplib.HTTPConnection(hostname, timeout=timeout)
     try:
-        conn.request('GET', path, headers=headers)
-        response = conn.getresponse()
-        if response.status != 200:
-            if logger is not None:
-                logger('http_get: %s returned status %s' % (path, response.status))
-            return None
+        if enable_auth:
+            password_mgr = HTTPPasswordMgrWithDefaultRealm()
+            password_mgr.add_password(None, url, username, password)
+            opener = build_opener(
+                HTTPDigestAuthHandler(password_mgr),
+                HTTPBasicAuthHandler(password_mgr)
+            )
+            response = opener.open(request, timeout=timeout)
+        else:
+            response = urlopen(request, timeout=timeout)
 
         body = response.read()
         try:
             return body.decode('utf-8')
         except Exception:
             return body.decode('latin1', 'ignore')
+    except HTTPError as exc:
+        if logger is not None:
+            logger('http_get: %s returned status %s' % (path, exc.code))
+        return None
+    except URLError as exc:
+        if logger is not None:
+            logger('http_get: error getting %s: %s' % (path, exc))
+        return None
     except Exception as exc:
         if logger is not None:
             logger('http_get: error getting %s: %s' % (path, exc))
         return None
-    finally:
+
+
+def http_post_json(hostname, path, payload, timeout=5, enable_auth=False, username='root', password='', logger=None):
+    url = 'http://%s%s' % (hostname, path)
+    body = json.dumps(payload)
+    if not isinstance(body, bytes):
+        body = body.encode('utf-8')
+
+    request = Request(url, data=body, headers={'Content-Type': 'application/json'})
+
+    try:
+        if enable_auth:
+            password_mgr = HTTPPasswordMgrWithDefaultRealm()
+            password_mgr.add_password(None, url, username, password)
+            opener = build_opener(
+                HTTPDigestAuthHandler(password_mgr),
+                HTTPBasicAuthHandler(password_mgr)
+            )
+            response = opener.open(request, timeout=timeout)
+        else:
+            response = urlopen(request, timeout=timeout)
+
+        raw_body = response.read()
         try:
-            conn.close()
+            return raw_body.decode('utf-8')
         except Exception:
-            pass
+            return raw_body.decode('latin1', 'ignore')
+    except HTTPError as exc:
+        if logger is not None:
+            logger('http_post_json: %s returned status %s' % (path, exc.code))
+        return None
+    except URLError as exc:
+        if logger is not None:
+            logger('http_post_json: error posting %s: %s' % (path, exc))
+        return None
+    except Exception as exc:
+        if logger is not None:
+            logger('http_post_json: error posting %s: %s' % (path, exc))
+        return None
 
 
 def get_param_cgi_values(hostname, path, timeout=5, enable_auth=False, username='root', password='', logger=None):
@@ -76,15 +142,29 @@ def get_first_value(values, keys, default='unknown'):
 
 
 def get_basic_device_info(hostname, timeout=5, enable_auth=False, username='root', password='', logger=None):
-    response = http_get(
+    response = http_post_json(
         hostname,
         '/axis-cgi/basicdeviceinfo.cgi',
+        payload={'apiVersion': '1.3', 'method': 'getAllProperties'},
         timeout=timeout,
         enable_auth=enable_auth,
         username=username,
         password=password,
         logger=logger
     )
+
+    # Fallback for older cameras/firmware that still provide GET semantics.
+    if response is None:
+        response = http_get(
+            hostname,
+            '/axis-cgi/basicdeviceinfo.cgi',
+            timeout=timeout,
+            enable_auth=enable_auth,
+            username=username,
+            password=password,
+            logger=logger
+        )
+
     if response is None:
         return None
 
