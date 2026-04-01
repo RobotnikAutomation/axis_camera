@@ -47,6 +47,7 @@ import diagnostic_updater
 import diagnostic_msgs
 
 from axis_camera.axis_lib.axis_control import ControlAxis
+from axis_camera.srv import set_brightness, set_brightnessResponse
 
 class AxisPTZ(threading.Thread):
     """
@@ -112,7 +113,7 @@ class AxisPTZ(threading.Thread):
             self.last_command_time = rospy.Time(0)
             self.command_timeout = rospy.Duration(self.control_timeout_value)
         
-        self.controller = ControlAxis(self.hostname)
+        self.controller = ControlAxis(self.hostname, args.get('username', 'root'), args.get('password', ''))
         # Time to set when the last command was received
         self.t_last_command_time = rospy.Time(0)
         # Time to control when the last command was received
@@ -137,6 +138,7 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
+        self.set_brightness_service = rospy.Service('~set_brightness', set_brightness, self.setBrightnessServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -246,7 +248,15 @@ class AxisPTZ(threading.Thread):
             rospy.logwarn('%s:homeService: PTZ not syncronized!', rospy.get_name())
             
         return {}
-        
+
+    def setBrightnessServiceCb(self, req):
+        result = self.controller.setBrightness(req.brightness)
+        if result['success']:
+            rospy.loginfo('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
+        return set_brightnessResponse(success=result['success'], message=result['message'])
+
         
     def controlPTZ(self):
         """
@@ -541,7 +551,9 @@ def main():
         'invert_tilt': False,
         'send_constantly': False,
         'pan_offset': 0.0,
-        'tilt_offset': 0.0
+        'tilt_offset': 0.0,
+        'username': 'root',
+        'password': ''
     }
     args = {}
 

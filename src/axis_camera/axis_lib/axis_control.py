@@ -4,6 +4,13 @@ except:
 	import urllib as urllib_parse #Not tested in pyhton2
 
 try:
+    import urllib.request as urllib_request
+    import urllib.error as urllib_error
+except:
+    import urllib2 as urllib_request
+    import urllib2 as urllib_error
+
+try:
     import httplib
 except:
     import http.client as httplib
@@ -12,8 +19,10 @@ import socket
 import math
 
 class ControlAxis():
-    def __init__(self, hostname):
+    def __init__(self, hostname, username='root', password=''):
         self.hostname = hostname
+        self._username = username
+        self._password = password
 
     def sendPTZCommand(self, pan, tilt, zoom):
         ret = {
@@ -105,4 +114,43 @@ class ControlAxis():
         
         return ptz_read
 
-        
+    def setBrightness(self, brightness):
+        ret = {
+            'success': False,
+            'message': ''
+        }
+
+        if brightness < -100 or brightness > 100:
+            ret['message'] = 'brightness value %d is out of range [-100, 100]' % brightness
+            return ret
+
+        params = urllib_parse.urlencode({
+            'action': 'update',
+            'ImageSource.I0.Sensor.Brightness': brightness
+        })
+        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+
+        try:
+            password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
+            password_mgr.add_password(None, 'http://' + self.hostname, self._username, self._password)
+            auth_handler = urllib_request.HTTPDigestAuthHandler(password_mgr)
+            opener = urllib_request.build_opener(auth_handler)
+
+            response = opener.open(url, timeout=5)
+            body = response.read().decode('utf-8').strip()
+
+            if body == 'OK':
+                ret['success'] = True
+                ret['message'] = 'brightness set to %d' % brightness
+            else:
+                ret['message'] = 'camera rejected update: %s' % body
+
+        except urllib_error.HTTPError as e:
+            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            ret['message'] = 'connection error: %s' % e.reason
+        except socket.timeout as e:
+            ret['message'] = 'connection timeout'
+
+        return ret
+
