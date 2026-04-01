@@ -48,6 +48,7 @@ import diagnostic_msgs
 
 from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.srv import set_brightness, set_brightnessResponse
+from axis_camera.srv import set_contrast, set_contrastResponse
 
 class AxisPTZ(threading.Thread):
     """
@@ -139,6 +140,7 @@ class AxisPTZ(threading.Thread):
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.set_brightness_service = rospy.Service('~set_brightness', set_brightness, self.setBrightnessServiceCb)
+        self.set_contrast_service = rospy.Service('~set_contrast', set_contrast, self.setContrastServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -256,6 +258,14 @@ class AxisPTZ(threading.Thread):
         else:
             rospy.logerr('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
         return set_brightnessResponse(success=result['success'], message=result['message'])
+
+    def setContrastServiceCb(self, req):
+        result = self.controller.setContrast(req.contrast)
+        if result['success']:
+            rospy.loginfo('%s:setContrastServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setContrastServiceCb: %s', rospy.get_name(), result['message'])
+        return set_contrastResponse(success=result['success'], message=result['message'])
 
         
     def controlPTZ(self):

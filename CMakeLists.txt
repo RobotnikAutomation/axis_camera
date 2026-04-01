@@ -35,6 +35,7 @@ FILES
    set_ptz.srv
    set_digital_output.srv
    set_brightness.srv
+   set_contrast.srv
 )
 
 generate_messages(DEPENDENCIES sensor_msgs geometry_msgs std_msgs robotnik_msgs axis_camera)

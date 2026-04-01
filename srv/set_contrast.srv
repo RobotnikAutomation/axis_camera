@@ -1,0 +1,4 @@
+int32 contrast   # [-100, 100]
+---
+bool success
+string message
