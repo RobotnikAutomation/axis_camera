@@ -194,3 +194,43 @@ class ControlAxis():
 
         return ret
 
+    def setSaturation(self, saturation):
+        ret = {
+            'success': False,
+            'message': ''
+        }
+
+        if saturation < -100 or saturation > 100:
+            ret['message'] = 'saturation value %d is out of range [-100, 100]' % saturation
+            return ret
+
+        params = urllib_parse.urlencode({
+            'action': 'update',
+            'ImageSource.I0.Sensor.ColorLevel': saturation
+        })
+        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+
+        try:
+            password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
+            password_mgr.add_password(None, 'http://' + self.hostname, self._username, self._password)
+            auth_handler = urllib_request.HTTPDigestAuthHandler(password_mgr)
+            opener = urllib_request.build_opener(auth_handler)
+
+            response = opener.open(url, timeout=5)
+            body = response.read().decode('utf-8').strip()
+
+            if body == 'OK':
+                ret['success'] = True
+                ret['message'] = 'saturation set to %d' % saturation
+            else:
+                ret['message'] = 'camera rejected update: %s' % body
+
+        except urllib_error.HTTPError as e:
+            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            ret['message'] = 'connection error: %s' % e.reason
+        except socket.timeout as e:
+            ret['message'] = 'connection timeout'
+
+        return ret
+
