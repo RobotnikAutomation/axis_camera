@@ -23,6 +23,87 @@ class ControlAxis():
         self.hostname = hostname
         self._username = username
         self._password = password
+        self._sensor_parameter_names = None
+
+    def _get_digest_opener(self):
+        password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
+        password_mgr.add_password(None, 'http://' + self.hostname, self._username, self._password)
+        auth_handler = urllib_request.HTTPDigestAuthHandler(password_mgr)
+        return urllib_request.build_opener(auth_handler)
+
+    def _list_sensor_parameters(self):
+        if self._sensor_parameter_names is not None:
+            return self._sensor_parameter_names
+
+        opener = self._get_digest_opener()
+        params = urllib_parse.urlencode({
+            'action': 'list',
+            'group': 'ImageSource.I0.Sensor'
+        })
+        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+        response = opener.open(url, timeout=5)
+        body = response.read().decode('utf-8').splitlines()
+
+        parameter_names = set()
+        for line in body:
+            if '=' not in line:
+                continue
+            key = line.split('=', 1)[0].strip()
+            prefix = 'root.ImageSource.I0.Sensor.'
+            if key.startswith(prefix):
+                parameter_names.add(key[len(prefix):])
+
+        self._sensor_parameter_names = parameter_names
+        return self._sensor_parameter_names
+
+    def _update_sensor_parameter(self, parameter_name, value, success_label):
+        ret = {
+            'success': False,
+            'message': ''
+        }
+
+        params = urllib_parse.urlencode({
+            'action': 'update',
+            'ImageSource.I0.Sensor.%s' % parameter_name: value
+        })
+        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+
+        try:
+            opener = self._get_digest_opener()
+            response = opener.open(url, timeout=5)
+            body = response.read().decode('utf-8').strip()
+
+            if body == 'OK':
+                ret['success'] = True
+                ret['message'] = '%s set to %s' % (success_label, value)
+            else:
+                ret['message'] = 'camera rejected update: %s' % body
+
+        except urllib_error.HTTPError as e:
+            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            ret['message'] = 'connection error: %s' % e.reason
+        except socket.timeout:
+            ret['message'] = 'connection timeout'
+
+        return ret
+
+    def _get_saturation_parameter_name(self):
+        try:
+            parameter_names = self._list_sensor_parameters()
+        except urllib_error.HTTPError as e:
+            return None, 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            return None, 'connection error: %s' % e.reason
+        except socket.timeout:
+            return None, 'connection timeout'
+
+        if 'Saturation' in parameter_names:
+            return 'Saturation', ''
+        if 'ColorLevel' in parameter_names:
+            return 'ColorLevel', ''
+
+        return None, 'camera does not expose ImageSource.I0.Sensor.Saturation or ColorLevel'
 
     def sendPTZCommand(self, pan, tilt, zoom):
         ret = {
@@ -115,122 +196,36 @@ class ControlAxis():
         return ptz_read
 
     def setBrightness(self, brightness):
-        ret = {
-            'success': False,
-            'message': ''
-        }
-
         if brightness < -100 or brightness > 100:
-            ret['message'] = 'brightness value %d is out of range [-100, 100]' % brightness
-            return ret
+            return {
+                'success': False,
+                'message': 'brightness value %d is out of range [-100, 100]' % brightness
+            }
 
-        params = urllib_parse.urlencode({
-            'action': 'update',
-            'ImageSource.I0.Sensor.Brightness': brightness
-        })
-        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-
-        try:
-            password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
-            password_mgr.add_password(None, 'http://' + self.hostname, self._username, self._password)
-            auth_handler = urllib_request.HTTPDigestAuthHandler(password_mgr)
-            opener = urllib_request.build_opener(auth_handler)
-
-            response = opener.open(url, timeout=5)
-            body = response.read().decode('utf-8').strip()
-
-            if body == 'OK':
-                ret['success'] = True
-                ret['message'] = 'brightness set to %d' % brightness
-            else:
-                ret['message'] = 'camera rejected update: %s' % body
-
-        except urllib_error.HTTPError as e:
-            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
-        except urllib_error.URLError as e:
-            ret['message'] = 'connection error: %s' % e.reason
-        except socket.timeout as e:
-            ret['message'] = 'connection timeout'
-
-        return ret
+        return self._update_sensor_parameter('Brightness', brightness, 'brightness')
 
     def setContrast(self, contrast):
-        ret = {
-            'success': False,
-            'message': ''
-        }
-
         if contrast < -100 or contrast > 100:
-            ret['message'] = 'contrast value %d is out of range [-100, 100]' % contrast
-            return ret
+            return {
+                'success': False,
+                'message': 'contrast value %d is out of range [-100, 100]' % contrast
+            }
 
-        params = urllib_parse.urlencode({
-            'action': 'update',
-            'ImageSource.I0.Sensor.Contrast': contrast
-        })
-        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-
-        try:
-            password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
-            password_mgr.add_password(None, 'http://' + self.hostname, self._username, self._password)
-            auth_handler = urllib_request.HTTPDigestAuthHandler(password_mgr)
-            opener = urllib_request.build_opener(auth_handler)
-
-            response = opener.open(url, timeout=5)
-            body = response.read().decode('utf-8').strip()
-
-            if body == 'OK':
-                ret['success'] = True
-                ret['message'] = 'contrast set to %d' % contrast
-            else:
-                ret['message'] = 'camera rejected update: %s' % body
-
-        except urllib_error.HTTPError as e:
-            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
-        except urllib_error.URLError as e:
-            ret['message'] = 'connection error: %s' % e.reason
-        except socket.timeout as e:
-            ret['message'] = 'connection timeout'
-
-        return ret
+        return self._update_sensor_parameter('Contrast', contrast, 'contrast')
 
     def setSaturation(self, saturation):
-        ret = {
-            'success': False,
-            'message': ''
-        }
-
         if saturation < -100 or saturation > 100:
-            ret['message'] = 'saturation value %d is out of range [-100, 100]' % saturation
-            return ret
+            return {
+                'success': False,
+                'message': 'saturation value %d is out of range [-100, 100]' % saturation
+            }
 
-        params = urllib_parse.urlencode({
-            'action': 'update',
-            'ImageSource.I0.Sensor.ColorLevel': saturation
-        })
-        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+        parameter_name, error_message = self._get_saturation_parameter_name()
+        if parameter_name is None:
+            return {
+                'success': False,
+                'message': error_message
+            }
 
-        try:
-            password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
-            password_mgr.add_password(None, 'http://' + self.hostname, self._username, self._password)
-            auth_handler = urllib_request.HTTPDigestAuthHandler(password_mgr)
-            opener = urllib_request.build_opener(auth_handler)
-
-            response = opener.open(url, timeout=5)
-            body = response.read().decode('utf-8').strip()
-
-            if body == 'OK':
-                ret['success'] = True
-                ret['message'] = 'saturation set to %d' % saturation
-            else:
-                ret['message'] = 'camera rejected update: %s' % body
-
-        except urllib_error.HTTPError as e:
-            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
-        except urllib_error.URLError as e:
-            ret['message'] = 'connection error: %s' % e.reason
-        except socket.timeout as e:
-            ret['message'] = 'connection timeout'
-
-        return ret
+        return self._update_sensor_parameter(parameter_name, saturation, 'saturation')
 
