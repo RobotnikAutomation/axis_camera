@@ -148,8 +148,9 @@ class AxisPTZ(threading.Thread):
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
         # Publish camera zoom info
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
-        # Publish image settings state
+        # Publish image settings state (base + explicit current alias)
         self.image_settings_pub = rospy.Publisher("~image_settings", ImageSettings, queue_size=10)
+        self.image_settings_current_pub = rospy.Publisher("~image_settings_current", ImageSettings, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.set_brightness_service = rospy.Service('~set_brightness', set_brightness, self.setBrightnessServiceCb)
@@ -548,6 +549,7 @@ class AxisPTZ(threading.Thread):
             rospy.logerr_throttle(5.0, '%s:publishImageSettings: %s', rospy.get_name(), result['message'])
 
         self.image_settings_pub.publish(msg)
+        self.image_settings_current_pub.publish(msg)
         
         
     def get_data(self):

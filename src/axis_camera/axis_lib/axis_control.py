@@ -30,6 +30,7 @@ class ControlAxis():
         self._day_night_parameter_path = None
         self._day_night_supported_modes = None
         self._parameter_int_ranges = {}
+        self._parameter_enum_values = {}
         self._last_known_image_settings = {
             'brightness': None,
             'contrast': None,
@@ -80,6 +81,43 @@ class ControlAxis():
         except Exception:
             self._parameter_int_ranges[cache_key] = (None, None)
             return (None, None)
+
+    def _get_parameter_enum_values_from_definitions(self, group, parameter_name):
+        cache_key = '%s.%s' % (group, parameter_name)
+        if cache_key in self._parameter_enum_values:
+            return self._parameter_enum_values[cache_key]
+
+        try:
+            opener = self._get_digest_opener()
+            params = urllib_parse.urlencode({
+                'action': 'listdefinitions',
+                'listformat': 'xmlschema',
+                'group': group
+            })
+            url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+            response = opener.open(url, timeout=5)
+            xml_text = response.read().decode('utf-8', errors='replace')
+            root = ET.fromstring(xml_text)
+            ns = {'ax': 'http://www.axis.com/ParameterDefinitionsSchema'}
+
+            xpath = './/ax:parameter[@name="%s"]' % parameter_name
+            parameter_node = root.find(xpath, ns)
+            if parameter_node is None:
+                self._parameter_enum_values[cache_key] = None
+                return None
+
+            entries = parameter_node.findall('.//ax:enum/ax:entry', ns)
+            if not entries:
+                self._parameter_enum_values[cache_key] = None
+                return None
+
+            values = set(entry.get('value') for entry in entries if entry.get('value') is not None)
+            result = values if values else None
+            self._parameter_enum_values[cache_key] = result
+            return result
+        except Exception:
+            self._parameter_enum_values[cache_key] = None
+            return None
 
     def getImageSettingsMetadata(self):
         metadata = {
@@ -333,77 +371,39 @@ class ControlAxis():
 
         return None, 'camera does not expose a supported day/night parameter'
 
-    def _extract_modes_from_value(self, value_text):
-        if ',' in value_text:
-            return [item.strip() for item in value_text.split(',') if item.strip()]
-        return []
-
     def _get_supported_white_balance_modes(self, parameter_path):
         if self._white_balance_supported_modes is not None:
             return self._white_balance_supported_modes, ''
 
-        modes = set()
+        parts = parameter_path.rsplit('.', 1)
+        if len(parts) == 2:
+            group, parameter_name = parts
+            modes = self._get_parameter_enum_values_from_definitions(group, parameter_name)
+            if modes:
+                self._white_balance_supported_modes = modes
+                return self._white_balance_supported_modes, ''
 
-        try:
-            lines = self._list_group_lines(parameter_path)
-        except urllib_error.HTTPError as e:
-            return None, 'HTTP error %d: %s' % (e.code, e.reason)
-        except urllib_error.URLError as e:
-            return None, 'connection error: %s' % e.reason
-        except socket.timeout:
-            return None, 'connection timeout'
-
-        for line in lines:
-            if '=' not in line:
-                continue
-            value = line.split('=', 1)[1].strip()
-            for mode in self._extract_modes_from_value(value):
-                modes.add(mode)
-            if value and ',' not in value:
-                modes.add(value)
-
-        baseline_modes = set(['auto', 'fixed_indoor', 'fixed_outdoor', 'hold'])
-        if not modes or len(modes) == 1:
-            # Some firmwares only return the currently active mode in list().
-            modes = modes.union(baseline_modes)
-
-        self._white_balance_supported_modes = modes
+        # Fallback if XML definitions are unavailable
+        self._white_balance_supported_modes = set(['auto', 'fixed_indoor', 'fixed_outdoor', 'hold'])
         return self._white_balance_supported_modes, ''
 
     def _get_supported_day_night_modes(self, parameter_path):
         if self._day_night_supported_modes is not None:
             return self._day_night_supported_modes, ''
 
-        modes = set()
+        parts = parameter_path.rsplit('.', 1)
+        if len(parts) == 2:
+            group, parameter_name = parts
+            modes = self._get_parameter_enum_values_from_definitions(group, parameter_name)
+            if modes:
+                self._day_night_supported_modes = modes
+                return self._day_night_supported_modes, ''
 
-        try:
-            lines = self._list_group_lines(parameter_path)
-        except urllib_error.HTTPError as e:
-            return None, 'HTTP error %d: %s' % (e.code, e.reason)
-        except urllib_error.URLError as e:
-            return None, 'connection error: %s' % e.reason
-        except socket.timeout:
-            return None, 'connection timeout'
-
-        for line in lines:
-            if '=' not in line:
-                continue
-            value = line.split('=', 1)[1].strip()
-            for mode in self._extract_modes_from_value(value):
-                modes.add(mode)
-            if value and ',' not in value:
-                modes.add(value)
-
-        # Choose baseline modes based on parameter type
+        # Fallback if XML definitions are unavailable
         if 'DayNightShift' in parameter_path:
-            baseline_modes = set(['auto', 'day', 'night'])
+            self._day_night_supported_modes = set(['auto', 'day', 'night'])
         else:  # IrCutFilter
-            baseline_modes = set(['auto', 'yes', 'no'])
-        
-        if not modes or len(modes) == 1:
-            modes = modes.union(baseline_modes)
-
-        self._day_night_supported_modes = modes
+            self._day_night_supported_modes = set(['auto', 'yes', 'no'])
         return self._day_night_supported_modes, ''
 
     def _supports_day_night_mode(self):
@@ -785,14 +785,16 @@ class ControlAxis():
             ret['day_night_shift_level'] = self._last_known_image_settings['day_night_shift_level']
             cached_fields += 1
 
-        if readable_fields > 0:
+        if readable_fields == 6:
             ret['success'] = True
-            if readable_fields < 6:
-                ret['message'] = 'partial read: %d/6 fields read from camera; remaining fields are fallback values' % readable_fields
-        elif cached_fields > 0:
-            ret['success'] = True
-            ret['message'] = 'camera read unavailable on this firmware; returning %d/6 cached values from successful set_* calls' % cached_fields
+            ret['message'] = 'ok'
+        elif readable_fields > 0 or cached_fields > 0:
+            ret['success'] = False
+            ret['message'] = (
+                'read failed for %d/6 fields; publishing fallback values '
+                '(readable=%d, cached=%d)'
+            ) % (6 - readable_fields, readable_fields, cached_fields)
         else:
             ret['success'] = False
-            ret['message'] = 'camera does not expose readable image settings via VAPIX list on this firmware'
+            ret['message'] = 'camera does not expose readable image settings on this firmware'
         return ret
