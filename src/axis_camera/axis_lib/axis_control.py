@@ -117,6 +117,21 @@ class ControlAxis():
         response = opener.open(url, timeout=5)
         return response.read().decode('utf-8').splitlines()
 
+    def _group_exists(self, group):
+        try:
+            lines = self._list_group_lines(group)
+        except Exception:
+            return False
+
+        if len(lines) == 0:
+            # Some firmwares return an empty body for valid leaf groups.
+            return True
+
+        if lines[0].startswith('# Error:'):
+            return False
+
+        return True
+
     def _get_white_balance_parameter_path(self):
         if self._white_balance_parameter_path is not None:
             return self._white_balance_parameter_path, ''
@@ -130,8 +145,12 @@ class ControlAxis():
         except socket.timeout:
             return None, 'connection timeout'
 
-        if 'WhiteBalance' in sensor_names:
+        if 'WhiteBalance' in sensor_names or self._group_exists('ImageSource.I0.Sensor.WhiteBalance'):
             self._white_balance_parameter_path = 'ImageSource.I0.Sensor.WhiteBalance'
+            return self._white_balance_parameter_path, ''
+
+        if self._group_exists('Image.I0.Appearance.WhiteBalance'):
+            self._white_balance_parameter_path = 'Image.I0.Appearance.WhiteBalance'
             return self._white_balance_parameter_path, ''
 
         try:
