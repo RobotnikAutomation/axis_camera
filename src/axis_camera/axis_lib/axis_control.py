@@ -17,6 +17,7 @@ except:
 
 import socket
 import math
+import xml.etree.ElementTree as ET
 
 class ControlAxis():
     def __init__(self, hostname, username='root', password=''):
@@ -28,6 +29,7 @@ class ControlAxis():
         self._white_balance_supported_modes = None
         self._day_night_parameter_path = None
         self._day_night_supported_modes = None
+        self._parameter_int_ranges = {}
         self._last_known_image_settings = {
             'brightness': None,
             'contrast': None,
@@ -36,6 +38,92 @@ class ControlAxis():
             'is_night_mode_active': None,
             'day_night_shift_level': None
         }
+
+    def _get_parameter_int_range_from_definitions(self, group, parameter_name):
+        cache_key = '%s.%s' % (group, parameter_name)
+        if cache_key in self._parameter_int_ranges:
+            return self._parameter_int_ranges[cache_key]
+
+        try:
+            opener = self._get_digest_opener()
+            params = urllib_parse.urlencode({
+                'action': 'listdefinitions',
+                'listformat': 'xmlschema',
+                'group': group
+            })
+            url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+            response = opener.open(url, timeout=5)
+            xml_text = response.read().decode('utf-8', errors='replace')
+            root = ET.fromstring(xml_text)
+            ns = {'ax': 'http://www.axis.com/ParameterDefinitionsSchema'}
+
+            xpath = './/ax:parameter[@name="%s"]' % parameter_name
+            parameter_node = root.find(xpath, ns)
+            if parameter_node is None:
+                self._parameter_int_ranges[cache_key] = (None, None)
+                return (None, None)
+
+            int_node = parameter_node.find('.//ax:int', ns)
+            if int_node is None:
+                self._parameter_int_ranges[cache_key] = (None, None)
+                return (None, None)
+
+            min_value = int_node.get('min')
+            max_value = int_node.get('max')
+            if min_value is None or max_value is None:
+                self._parameter_int_ranges[cache_key] = (None, None)
+                return (None, None)
+
+            parsed = (int(min_value), int(max_value))
+            self._parameter_int_ranges[cache_key] = parsed
+            return parsed
+        except Exception:
+            self._parameter_int_ranges[cache_key] = (None, None)
+            return (None, None)
+
+    def getImageSettingsMetadata(self):
+        metadata = {
+            'brightness_min': -100,
+            'brightness_max': 100,
+            'contrast_min': -100,
+            'contrast_max': 100,
+            'saturation_min': -100,
+            'saturation_max': 100,
+            'white_balance_available': False,
+            'day_night_available': False,
+            'day_night_shift_level_min': 0,
+            'day_night_shift_level_max': 100
+        }
+
+        brightness_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'Brightness')
+        if brightness_range[0] is not None:
+            metadata['brightness_min'] = brightness_range[0]
+            metadata['brightness_max'] = brightness_range[1]
+
+        contrast_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'Contrast')
+        if contrast_range[0] is not None:
+            metadata['contrast_min'] = contrast_range[0]
+            metadata['contrast_max'] = contrast_range[1]
+
+        saturation_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'Saturation')
+        if saturation_range[0] is None:
+            saturation_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'ColorLevel')
+        if saturation_range[0] is not None:
+            metadata['saturation_min'] = saturation_range[0]
+            metadata['saturation_max'] = saturation_range[1]
+
+        shift_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.DayNight', 'ShiftLevel')
+        if shift_range[0] is not None:
+            metadata['day_night_shift_level_min'] = shift_range[0]
+            metadata['day_night_shift_level_max'] = shift_range[1]
+
+        wb_path, _ = self._get_white_balance_parameter_path()
+        metadata['white_balance_available'] = wb_path is not None
+
+        dn_path, _ = self._get_day_night_parameter_path()
+        metadata['day_night_available'] = dn_path is not None
+
+        return metadata
 
     def _get_digest_opener(self):
         password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()

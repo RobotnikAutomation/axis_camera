@@ -45,6 +45,7 @@ from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
 import diagnostic_updater
 import diagnostic_msgs
+from axis_camera.msg import ImageSettings
 
 from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.srv import set_brightness, set_brightnessResponse
@@ -129,6 +130,12 @@ class AxisPTZ(threading.Thread):
         self.control_mode = 'position'
         self.t_last_command_sent = rospy.Time(0)
         self.t_control_loop = 1 / self.rate
+        self.image_settings_pub_rate = args['image_settings_pub_rate']
+        if self.image_settings_pub_rate <= 0.0:
+            self.image_settings_pub_rate = 1.0
+        self.image_settings_pub_period = rospy.Duration(1.0 / self.image_settings_pub_rate)
+        self.t_last_image_settings_pub = rospy.Time(0)
+        self.image_settings_metadata = self.controller.getImageSettingsMetadata()
 
     def rosSetup(self):
         """
@@ -141,6 +148,8 @@ class AxisPTZ(threading.Thread):
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
         # Publish camera zoom info
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
+        # Publish image settings state
+        self.image_settings_pub = rospy.Publisher("~image_settings", ImageSettings, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.set_brightness_service = rospy.Service('~set_brightness', set_brightness, self.setBrightnessServiceCb)
@@ -499,6 +508,46 @@ class AxisPTZ(threading.Thread):
         msg.effort = [0.0, 0.0, 0.0]
         
         self.joint_state_publisher.publish(msg)
+
+        now = rospy.Time.now()
+        if (now - self.t_last_image_settings_pub) >= self.image_settings_pub_period:
+            self.publishImageSettings(now)
+            self.t_last_image_settings_pub = now
+
+    def publishImageSettings(self, now):
+        result = self.controller.getImageSettings()
+        metadata = self.image_settings_metadata
+
+        msg = ImageSettings()
+        msg.header.stamp = now
+        msg.is_valid = result['success']
+        msg.status_message = result['message']
+
+        msg.brightness = result['brightness']
+        msg.brightness_min = metadata['brightness_min']
+        msg.brightness_max = metadata['brightness_max']
+
+        msg.contrast = result['contrast']
+        msg.contrast_min = metadata['contrast_min']
+        msg.contrast_max = metadata['contrast_max']
+
+        msg.saturation = result['saturation']
+        msg.saturation_min = metadata['saturation_min']
+        msg.saturation_max = metadata['saturation_max']
+
+        msg.white_balance = result['white_balance']
+        msg.white_balance_available = metadata['white_balance_available']
+
+        msg.day_night_available = metadata['day_night_available']
+        msg.is_night_mode_active = result['is_night_mode_active']
+        msg.day_night_shift_level = result['day_night_shift_level']
+        msg.day_night_shift_level_min = metadata['day_night_shift_level_min']
+        msg.day_night_shift_level_max = metadata['day_night_shift_level_max']
+
+        if not result['success']:
+            rospy.logerr_throttle(5.0, '%s:publishImageSettings: %s', rospy.get_name(), result['message'])
+
+        self.image_settings_pub.publish(msg)
         
         
     def get_data(self):
@@ -614,6 +663,7 @@ def main():
         'tilt_offset': 0.0,
         'username': 'root',
         'password': ''
+        ,'image_settings_pub_rate': 1.0
     }
     args = {}
 

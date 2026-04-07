@@ -28,6 +28,7 @@ FILES
    Axis.msg
    ptz.msg
    inputs_outputs.msg
+  ImageSettings.msg
 )
 
 add_service_files(DIRECTORY srv
