@@ -50,6 +50,7 @@ from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.srv import set_brightness, set_brightnessResponse
 from axis_camera.srv import set_contrast, set_contrastResponse
 from axis_camera.srv import set_saturation, set_saturationResponse
+from axis_camera.srv import set_day_night_mode, set_day_night_modeResponse
 from axis_camera.srv import set_white_balance, set_white_balanceResponse
 
 class AxisPTZ(threading.Thread):
@@ -144,6 +145,7 @@ class AxisPTZ(threading.Thread):
         self.set_brightness_service = rospy.Service('~set_brightness', set_brightness, self.setBrightnessServiceCb)
         self.set_contrast_service = rospy.Service('~set_contrast', set_contrast, self.setContrastServiceCb)
         self.set_saturation_service = rospy.Service('~set_saturation', set_saturation, self.setSaturationServiceCb)
+        self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', set_day_night_mode, self.setDayNightModeServiceCb)
         self.set_white_balance_service = rospy.Service('~set_white_balance', set_white_balance, self.setWhiteBalanceServiceCb)
 
         # Diagnostic Updater
@@ -279,6 +281,14 @@ class AxisPTZ(threading.Thread):
         else:
             rospy.logerr('%s:setSaturationServiceCb: %s', rospy.get_name(), result['message'])
         return set_saturationResponse(success=result['success'], message=result['message'])
+
+    def setDayNightModeServiceCb(self, req):
+        result = self.controller.setDayNightMode(req.day_night_mode)
+        if result['success']:
+            rospy.loginfo('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
+        return set_day_night_modeResponse(success=result['success'], message=result['message'])
 
     def setWhiteBalanceServiceCb(self, req):
         result = self.controller.setWhiteBalance(req.white_balance)

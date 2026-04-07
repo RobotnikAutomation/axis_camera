@@ -26,6 +26,8 @@ class ControlAxis():
         self._sensor_parameter_names = None
         self._white_balance_parameter_path = None
         self._white_balance_supported_modes = None
+        self._day_night_parameter_path = None
+        self._day_night_supported_modes = None
 
     def _get_digest_opener(self):
         password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
@@ -168,6 +170,22 @@ class ControlAxis():
 
         return None, 'camera does not expose a supported white balance parameter'
 
+    def _get_day_night_parameter_path(self):
+        if self._day_night_parameter_path is not None:
+            return self._day_night_parameter_path, ''
+
+        # Try the parameter specified in the VAPIX task first
+        if self._group_exists('ImageSource.I0.DayNight.DayNightShift'):
+            self._day_night_parameter_path = 'ImageSource.I0.DayNight.DayNightShift'
+            return self._day_night_parameter_path, ''
+
+        # Fall back to IrCutFilter (used on some firmware versions)
+        if self._group_exists('ImageSource.I0.DayNight.IrCutFilter'):
+            self._day_night_parameter_path = 'ImageSource.I0.DayNight.IrCutFilter'
+            return self._day_night_parameter_path, ''
+
+        return None, 'camera does not expose a supported day/night parameter'
+
     def _extract_modes_from_value(self, value_text):
         if ',' in value_text:
             return [item.strip() for item in value_text.split(',') if item.strip()]
@@ -204,6 +222,59 @@ class ControlAxis():
 
         self._white_balance_supported_modes = modes
         return self._white_balance_supported_modes, ''
+
+    def _get_supported_day_night_modes(self, parameter_path):
+        if self._day_night_supported_modes is not None:
+            return self._day_night_supported_modes, ''
+
+        modes = set()
+
+        try:
+            lines = self._list_group_lines(parameter_path)
+        except urllib_error.HTTPError as e:
+            return None, 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            return None, 'connection error: %s' % e.reason
+        except socket.timeout:
+            return None, 'connection timeout'
+
+        for line in lines:
+            if '=' not in line:
+                continue
+            value = line.split('=', 1)[1].strip()
+            for mode in self._extract_modes_from_value(value):
+                modes.add(mode)
+            if value and ',' not in value:
+                modes.add(value)
+
+        # Choose baseline modes based on parameter type
+        if 'DayNightShift' in parameter_path:
+            baseline_modes = set(['auto', 'day', 'night'])
+        else:  # IrCutFilter
+            baseline_modes = set(['auto', 'yes', 'no'])
+        
+        if not modes or len(modes) == 1:
+            modes = modes.union(baseline_modes)
+
+        self._day_night_supported_modes = modes
+        return self._day_night_supported_modes, ''
+
+    def _supports_day_night_mode(self):
+        try:
+            property_lines = self._list_group_lines('Properties.ImageSource')
+        except urllib_error.HTTPError as e:
+            return None, 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            return None, 'connection error: %s' % e.reason
+        except socket.timeout:
+            return None, 'connection timeout'
+
+        for line in property_lines:
+            if line.startswith('root.Properties.ImageSource.DayNight='):
+                value = line.split('=', 1)[1].strip().lower()
+                return value == 'yes', ''
+
+        return True, ''
 
     def _update_parameter_path(self, parameter_path, value, success_label):
         ret = {
@@ -395,4 +466,52 @@ class ControlAxis():
             }
 
         return self._update_parameter_path(parameter_path, white_balance, 'white_balance')
+
+    def setDayNightMode(self, day_night_mode):
+        normalized_mode = day_night_mode.strip().lower()
+
+        supports_day_night, error_message = self._supports_day_night_mode()
+        if supports_day_night is None:
+            return {
+                'success': False,
+                'message': error_message
+            }
+        if not supports_day_night:
+            return {
+                'success': False,
+                'message': 'camera does not support manual day/night mode control'
+            }
+
+        parameter_path, error_message = self._get_day_night_parameter_path()
+        if parameter_path is None:
+            return {
+                'success': False,
+                'message': error_message
+            }
+
+        supported_modes, error_message = self._get_supported_day_night_modes(parameter_path)
+        if supported_modes is None:
+            return {
+                'success': False,
+                'message': error_message
+            }
+
+        # Map user-friendly aliases based on parameter type
+        if 'DayNightShift' in parameter_path:
+            # DayNightShift: day/night → day/night (no mapping needed)
+            vapix_mode = normalized_mode
+            friendly_modes = 'auto, day, night'
+        else:
+            # IrCutFilter: day/night → yes/no
+            MODE_ALIAS = {'day': 'yes', 'night': 'no'}
+            vapix_mode = MODE_ALIAS.get(normalized_mode, normalized_mode)
+            friendly_modes = 'auto, day (yes), night (no)'
+
+        if vapix_mode not in supported_modes:
+            return {
+                'success': False,
+                'message': 'unsupported day_night_mode "%s". Supported modes: %s' % (day_night_mode, friendly_modes)
+            }
+
+        return self._update_parameter_path(parameter_path, vapix_mode, 'day_night_mode')
 

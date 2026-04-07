@@ -1,0 +1,4 @@
+string day_night_mode
+---
+bool success
+string message
