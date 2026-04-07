@@ -24,6 +24,8 @@ class ControlAxis():
         self._username = username
         self._password = password
         self._sensor_parameter_names = None
+        self._white_balance_parameter_path = None
+        self._white_balance_supported_modes = None
 
     def _get_digest_opener(self):
         password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
@@ -104,6 +106,114 @@ class ControlAxis():
             return 'ColorLevel', ''
 
         return None, 'camera does not expose ImageSource.I0.Sensor.Saturation or ColorLevel'
+
+    def _list_group_lines(self, group):
+        opener = self._get_digest_opener()
+        params = urllib_parse.urlencode({
+            'action': 'list',
+            'group': group
+        })
+        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+        response = opener.open(url, timeout=5)
+        return response.read().decode('utf-8').splitlines()
+
+    def _get_white_balance_parameter_path(self):
+        if self._white_balance_parameter_path is not None:
+            return self._white_balance_parameter_path, ''
+
+        try:
+            sensor_names = self._list_sensor_parameters()
+        except urllib_error.HTTPError as e:
+            return None, 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            return None, 'connection error: %s' % e.reason
+        except socket.timeout:
+            return None, 'connection timeout'
+
+        if 'WhiteBalance' in sensor_names:
+            self._white_balance_parameter_path = 'ImageSource.I0.Sensor.WhiteBalance'
+            return self._white_balance_parameter_path, ''
+
+        try:
+            appearance_lines = self._list_group_lines('Image.I0.Appearance')
+        except Exception:
+            appearance_lines = []
+
+        for line in appearance_lines:
+            if line.startswith('root.Image.I0.Appearance.WhiteBalance='):
+                self._white_balance_parameter_path = 'Image.I0.Appearance.WhiteBalance'
+                return self._white_balance_parameter_path, ''
+
+        return None, 'camera does not expose a supported white balance parameter'
+
+    def _extract_modes_from_value(self, value_text):
+        if ',' in value_text:
+            return [item.strip() for item in value_text.split(',') if item.strip()]
+        return []
+
+    def _get_supported_white_balance_modes(self, parameter_path):
+        if self._white_balance_supported_modes is not None:
+            return self._white_balance_supported_modes, ''
+
+        modes = set()
+
+        try:
+            lines = self._list_group_lines(parameter_path)
+        except urllib_error.HTTPError as e:
+            return None, 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            return None, 'connection error: %s' % e.reason
+        except socket.timeout:
+            return None, 'connection timeout'
+
+        for line in lines:
+            if '=' not in line:
+                continue
+            value = line.split('=', 1)[1].strip()
+            for mode in self._extract_modes_from_value(value):
+                modes.add(mode)
+            if value and ',' not in value:
+                modes.add(value)
+
+        baseline_modes = set(['auto', 'fixed_indoor', 'fixed_outdoor', 'hold'])
+        if not modes or len(modes) == 1:
+            # Some firmwares only return the currently active mode in list().
+            modes = modes.union(baseline_modes)
+
+        self._white_balance_supported_modes = modes
+        return self._white_balance_supported_modes, ''
+
+    def _update_parameter_path(self, parameter_path, value, success_label):
+        ret = {
+            'success': False,
+            'message': ''
+        }
+
+        params = urllib_parse.urlencode({
+            'action': 'update',
+            parameter_path: value
+        })
+        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+
+        try:
+            opener = self._get_digest_opener()
+            response = opener.open(url, timeout=5)
+            body = response.read().decode('utf-8').strip()
+
+            if body == 'OK':
+                ret['success'] = True
+                ret['message'] = '%s set to %s' % (success_label, value)
+            else:
+                ret['message'] = 'camera rejected update: %s' % body
+
+        except urllib_error.HTTPError as e:
+            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            ret['message'] = 'connection error: %s' % e.reason
+        except socket.timeout:
+            ret['message'] = 'connection timeout'
+
+        return ret
 
     def sendPTZCommand(self, pan, tilt, zoom):
         ret = {
@@ -228,4 +338,28 @@ class ControlAxis():
             }
 
         return self._update_sensor_parameter(parameter_name, saturation, 'saturation')
+
+    def setWhiteBalance(self, white_balance):
+        parameter_path, error_message = self._get_white_balance_parameter_path()
+        if parameter_path is None:
+            return {
+                'success': False,
+                'message': error_message
+            }
+
+        supported_modes, error_message = self._get_supported_white_balance_modes(parameter_path)
+        if supported_modes is None:
+            return {
+                'success': False,
+                'message': error_message
+            }
+
+        if white_balance not in supported_modes:
+            modes_text = ', '.join(sorted(supported_modes))
+            return {
+                'success': False,
+                'message': 'unsupported white_balance mode "%s". Supported modes: %s' % (white_balance, modes_text)
+            }
+
+        return self._update_parameter_path(parameter_path, white_balance, 'white_balance')
 

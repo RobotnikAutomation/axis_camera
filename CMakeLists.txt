@@ -37,6 +37,7 @@ FILES
    set_brightness.srv
    set_contrast.srv
   set_saturation.srv
+  set_white_balance.srv
 )
 
 generate_messages(DEPENDENCIES sensor_msgs geometry_msgs std_msgs robotnik_msgs axis_camera)
