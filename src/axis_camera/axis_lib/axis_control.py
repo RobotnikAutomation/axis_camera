@@ -28,6 +28,14 @@ class ControlAxis():
         self._white_balance_supported_modes = None
         self._day_night_parameter_path = None
         self._day_night_supported_modes = None
+        self._last_known_image_settings = {
+            'brightness': None,
+            'contrast': None,
+            'saturation': None,
+            'white_balance': None,
+            'is_night_mode_active': None,
+            'day_night_shift_level': None
+        }
 
     def _get_digest_opener(self):
         password_mgr = urllib_request.HTTPPasswordMgrWithDefaultRealm()
@@ -136,6 +144,57 @@ class ControlAxis():
             return False
 
         return True
+
+    def _read_parameter_value(self, parameter_path):
+        """Read a single parameter value from VAPIX. Returns the value or None if not found."""
+        try:
+            opener = self._get_digest_opener()
+            params = urllib_parse.urlencode({
+                'action': 'list',
+                'group': parameter_path
+            })
+            url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
+            response = opener.open(url, timeout=5)
+            body = response.read().decode('utf-8').strip()
+            
+            if not body or body.startswith('# Error'):
+                return None
+            
+            # If returns a single line with the parameter
+            lines = body.splitlines()
+            for line in lines:
+                if '=' in line and not line.startswith('#'):
+                    value = line.split('=', 1)[1].strip()
+                    return value
+            return None
+        except Exception:
+            return None
+
+    def _ptz_brightness_to_service_range(self, ptz_brightness):
+        """Convert PTZ brightness range (typically 1..9999) to normalized range [0, 100]."""
+        min_val = 1
+        max_val = 9999
+
+        min_str = self._read_parameter_value('PTZ.Limit.L1.MinBrightness')
+        max_str = self._read_parameter_value('PTZ.Limit.L1.MaxBrightness')
+        try:
+            if min_str is not None:
+                min_val = int(min_str)
+            if max_str is not None:
+                max_val = int(max_str)
+        except ValueError:
+            pass
+
+        if max_val <= min_val:
+            return 0
+
+        normalized = (float(ptz_brightness) - float(min_val)) / float(max_val - min_val)
+        mapped = normalized * 100.0
+        if mapped < 0.0:
+            mapped = 0.0
+        if mapped > 100.0:
+            mapped = 100.0
+        return int(round(mapped))
 
     def _get_white_balance_parameter_path(self):
         if self._white_balance_parameter_path is not None:
@@ -373,6 +432,10 @@ class ControlAxis():
                     autoiris = (params['autoiris'] == 'on')
                 else:
                     autoiris = False
+                if 'brightness' in params:
+                    brightness = float(params['brightness'])
+                else:
+                    brightness = None
 
                 ptz_read = {
                     "pan" : pan,
@@ -382,6 +445,7 @@ class ControlAxis():
                     "autofocus" : autofocus,
                     "iris" : iris,
                     "autoiris" : autoiris,
+                    "brightness" : brightness,
                     "error_reading" : False,
                     "error_reading_msg" : ''
                 }    
@@ -405,7 +469,10 @@ class ControlAxis():
                 'message': 'brightness value %d is out of range [-100, 100]' % brightness
             }
 
-        return self._update_sensor_parameter('Brightness', brightness, 'brightness')
+        result = self._update_sensor_parameter('Brightness', brightness, 'brightness')
+        if result['success']:
+            self._last_known_image_settings['brightness'] = brightness
+        return result
 
     def setContrast(self, contrast):
         if contrast < -100 or contrast > 100:
@@ -414,7 +481,10 @@ class ControlAxis():
                 'message': 'contrast value %d is out of range [-100, 100]' % contrast
             }
 
-        return self._update_sensor_parameter('Contrast', contrast, 'contrast')
+        result = self._update_sensor_parameter('Contrast', contrast, 'contrast')
+        if result['success']:
+            self._last_known_image_settings['contrast'] = contrast
+        return result
 
     def setSaturation(self, saturation):
         if saturation < -100 or saturation > 100:
@@ -433,12 +503,14 @@ class ControlAxis():
         # Try the detected/default parameter name
         result = self._update_sensor_parameter(parameter_name, saturation, 'saturation')
         if result['success']:
+            self._last_known_image_settings['saturation'] = saturation
             return result
 
         # If Saturation failed, try ColorLevel as fallback
         if parameter_name == 'Saturation':
             result = self._update_sensor_parameter('ColorLevel', saturation, 'saturation')
             if result['success']:
+                self._last_known_image_settings['saturation'] = saturation
                 return result
 
         return result
@@ -465,7 +537,10 @@ class ControlAxis():
                 'message': 'unsupported white_balance mode "%s". Supported modes: %s' % (white_balance, modes_text)
             }
 
-        return self._update_parameter_path(parameter_path, white_balance, 'white_balance')
+        result = self._update_parameter_path(parameter_path, white_balance, 'white_balance')
+        if result['success']:
+            self._last_known_image_settings['white_balance'] = white_balance
+        return result
 
     def setDayNightMode(self, day_night_mode):
         normalized_mode = day_night_mode.strip().lower()
@@ -513,5 +588,123 @@ class ControlAxis():
                 'message': 'unsupported day_night_mode "%s". Supported modes: %s' % (day_night_mode, friendly_modes)
             }
 
-        return self._update_parameter_path(parameter_path, vapix_mode, 'day_night_mode')
+        result = self._update_parameter_path(parameter_path, vapix_mode, 'day_night_mode')
+        if result['success']:
+            if 'DayNightShift' in parameter_path:
+                if vapix_mode == 'night':
+                    self._last_known_image_settings['is_night_mode_active'] = True
+                elif vapix_mode == 'day':
+                    self._last_known_image_settings['is_night_mode_active'] = False
+            else:
+                if vapix_mode == 'no':
+                    self._last_known_image_settings['is_night_mode_active'] = True
+                elif vapix_mode == 'yes':
+                    self._last_known_image_settings['is_night_mode_active'] = False
+        return result
 
+    def getImageSettings(self):
+        ret = {
+            'success': False,
+            'brightness': 0,
+            'contrast': 0,
+            'saturation': 0,
+            'white_balance': '',
+            'is_night_mode_active': False,
+            'day_night_shift_level': 0,
+            'message': ''
+        }
+        readable_fields = 0
+        cached_fields = 0
+
+        # Read brightness, contrast directly from parameters
+        brightness_val = self._read_parameter_value('ImageSource.I0.Sensor.Brightness')
+        if brightness_val:
+            try:
+                ret['brightness'] = int(brightness_val)
+                readable_fields += 1
+            except ValueError:
+                pass
+        elif self._last_known_image_settings['brightness'] is not None:
+            ret['brightness'] = self._last_known_image_settings['brightness']
+            cached_fields += 1
+
+        # Fallback: some cameras expose live brightness via PTZ position only.
+        if not brightness_val and self._last_known_image_settings['brightness'] is None:
+            ptz_state = self.getPTZState()
+            if (not ptz_state.get('error_reading', True)) and (ptz_state.get('brightness') is not None):
+                ret['brightness'] = self._ptz_brightness_to_service_range(ptz_state['brightness'])
+                readable_fields += 1
+
+        contrast_val = self._read_parameter_value('ImageSource.I0.Sensor.Contrast')
+        if contrast_val:
+            try:
+                ret['contrast'] = int(contrast_val)
+                readable_fields += 1
+            except ValueError:
+                pass
+        elif self._last_known_image_settings['contrast'] is not None:
+            ret['contrast'] = self._last_known_image_settings['contrast']
+            cached_fields += 1
+
+        # Try saturation (try both Saturation and ColorLevel)
+        saturation_val = self._read_parameter_value('ImageSource.I0.Sensor.Saturation')
+        if not saturation_val:
+            saturation_val = self._read_parameter_value('ImageSource.I0.Sensor.ColorLevel')
+        if saturation_val:
+            try:
+                ret['saturation'] = int(saturation_val)
+                readable_fields += 1
+            except ValueError:
+                pass
+        elif self._last_known_image_settings['saturation'] is not None:
+            ret['saturation'] = self._last_known_image_settings['saturation']
+            cached_fields += 1
+
+        # Read white balance
+        white_balance_path, _ = self._get_white_balance_parameter_path()
+        if white_balance_path:
+            white_balance_val = self._read_parameter_value(white_balance_path)
+            if white_balance_val:
+                ret['white_balance'] = white_balance_val
+                readable_fields += 1
+            elif self._last_known_image_settings['white_balance'] is not None:
+                ret['white_balance'] = self._last_known_image_settings['white_balance']
+                cached_fields += 1
+
+        # Read day/night parameters
+        ir_cut_val = self._read_parameter_value('ImageSource.I0.DayNight.IrCutFilter')
+        day_night_shift_val = self._read_parameter_value('ImageSource.I0.DayNight.DayNightShift')
+        
+        if ir_cut_val:
+            ret['is_night_mode_active'] = (ir_cut_val.lower() == 'no')
+            readable_fields += 1
+        elif day_night_shift_val:
+            ret['is_night_mode_active'] = (day_night_shift_val.lower() == 'night')
+            readable_fields += 1
+        elif self._last_known_image_settings['is_night_mode_active'] is not None:
+            ret['is_night_mode_active'] = self._last_known_image_settings['is_night_mode_active']
+            cached_fields += 1
+
+        # Read shift level
+        shift_level_val = self._read_parameter_value('ImageSource.I0.DayNight.ShiftLevel')
+        if shift_level_val:
+            try:
+                ret['day_night_shift_level'] = int(shift_level_val)
+                readable_fields += 1
+            except ValueError:
+                pass
+        elif self._last_known_image_settings['day_night_shift_level'] is not None:
+            ret['day_night_shift_level'] = self._last_known_image_settings['day_night_shift_level']
+            cached_fields += 1
+
+        if readable_fields > 0:
+            ret['success'] = True
+            if readable_fields < 6:
+                ret['message'] = 'partial read: %d/6 fields read from camera; remaining fields are fallback values' % readable_fields
+        elif cached_fields > 0:
+            ret['success'] = True
+            ret['message'] = 'camera read unavailable on this firmware; returning %d/6 cached values from successful set_* calls' % cached_fields
+        else:
+            ret['success'] = False
+            ret['message'] = 'camera does not expose readable image settings via VAPIX list on this firmware'
+        return ret

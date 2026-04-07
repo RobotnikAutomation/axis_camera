@@ -52,6 +52,7 @@ from axis_camera.srv import set_contrast, set_contrastResponse
 from axis_camera.srv import set_saturation, set_saturationResponse
 from axis_camera.srv import set_day_night_mode, set_day_night_modeResponse
 from axis_camera.srv import set_white_balance, set_white_balanceResponse
+from axis_camera.srv import get_image_settings, get_image_settingsResponse
 
 class AxisPTZ(threading.Thread):
     """
@@ -147,6 +148,7 @@ class AxisPTZ(threading.Thread):
         self.set_saturation_service = rospy.Service('~set_saturation', set_saturation, self.setSaturationServiceCb)
         self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', set_day_night_mode, self.setDayNightModeServiceCb)
         self.set_white_balance_service = rospy.Service('~set_white_balance', set_white_balance, self.setWhiteBalanceServiceCb)
+        self.get_image_settings_service = rospy.Service('~get_image_settings', get_image_settings, self.getImageSettingsServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -297,6 +299,23 @@ class AxisPTZ(threading.Thread):
         else:
             rospy.logerr('%s:setWhiteBalanceServiceCb: %s', rospy.get_name(), result['message'])
         return set_white_balanceResponse(success=result['success'], message=result['message'])
+
+    def getImageSettingsServiceCb(self, req):
+        result = self.controller.getImageSettings()
+        if result['success']:
+            rospy.loginfo('%s:getImageSettingsServiceCb: retrieved image settings', rospy.get_name())
+        else:
+            rospy.logerr('%s:getImageSettingsServiceCb: %s', rospy.get_name(), result['message'])
+        return get_image_settingsResponse(
+            success=result['success'],
+            message=result['message'],
+            brightness=result['brightness'],
+            contrast=result['contrast'],
+            saturation=result['saturation'],
+            white_balance=result['white_balance'],
+            is_night_mode_active=result['is_night_mode_active'],
+            day_night_shift_level=result['day_night_shift_level']
+        )
 
         
     def controlPTZ(self):

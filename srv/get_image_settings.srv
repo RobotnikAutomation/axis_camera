@@ -1,0 +1,9 @@
+---
+bool success
+string message
+int32 brightness
+int32 contrast
+int32 saturation
+string white_balance
+bool is_night_mode_active
+int32 day_night_shift_level
