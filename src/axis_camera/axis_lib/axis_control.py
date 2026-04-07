@@ -91,6 +91,7 @@ class ControlAxis():
         return ret
 
     def _get_saturation_parameter_name(self):
+        # First check the sensor parameter list
         try:
             parameter_names = self._list_sensor_parameters()
         except urllib_error.HTTPError as e:
@@ -105,7 +106,9 @@ class ControlAxis():
         if 'ColorLevel' in parameter_names:
             return 'ColorLevel', ''
 
-        return None, 'camera does not expose ImageSource.I0.Sensor.Saturation or ColorLevel'
+        # If not in list, some firmwares still accept these parameters
+        # Try Saturation first
+        return 'Saturation', ''
 
     def _list_group_lines(self, group):
         opener = self._get_digest_opener()
@@ -356,7 +359,18 @@ class ControlAxis():
                 'message': error_message
             }
 
-        return self._update_sensor_parameter(parameter_name, saturation, 'saturation')
+        # Try the detected/default parameter name
+        result = self._update_sensor_parameter(parameter_name, saturation, 'saturation')
+        if result['success']:
+            return result
+
+        # If Saturation failed, try ColorLevel as fallback
+        if parameter_name == 'Saturation':
+            result = self._update_sensor_parameter('ColorLevel', saturation, 'saturation')
+            if result['success']:
+                return result
+
+        return result
 
     def setWhiteBalance(self, white_balance):
         parameter_path, error_message = self._get_white_balance_parameter_path()
