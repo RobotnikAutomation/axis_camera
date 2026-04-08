@@ -56,8 +56,8 @@ class ControlAxis():
                     params = dict([s.split('=',2) for s in body.splitlines()])
                 except:
                     params = dict([s.decode().split('=',2) for s in body.splitlines()])
-                pan = math.radians(float(params['pan'])) if 'pan' in params else 0.0
-                tilt = math.radians(float(params['tilt'])) if 'tilt' in params else 0.0
+                pan = math.radians(float(params['pan']))
+                tilt = math.radians(float(params['tilt']))
 
                 if 'zoom' in params:
                     zoom = float(params['zoom'])

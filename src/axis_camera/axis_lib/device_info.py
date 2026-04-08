@@ -43,39 +43,68 @@ def _encode_basic_auth(username, password):
     return 'Basic %s' % encoded
 
 
+def _auth_candidates(enable_auth, username, password):
+    candidates = [None]
+
+    if username and password:
+        if enable_auth:
+            candidates.append((username, password))
+        else:
+            # When enable_auth is false some cameras still require auth for CGI endpoints.
+            candidates.append((username, password))
+
+    if password and username != 'root':
+        fallback = ('root', password)
+        if fallback not in candidates:
+            candidates.append(fallback)
+
+    return candidates
+
+
+def _open_request(request, url, timeout, credentials):
+    if credentials is None:
+        return urlopen(request, timeout=timeout)
+
+    auth_username, auth_password = credentials
+    password_mgr = HTTPPasswordMgrWithDefaultRealm()
+    password_mgr.add_password(None, url, auth_username, auth_password)
+    opener = build_opener(
+        HTTPDigestAuthHandler(password_mgr),
+        HTTPBasicAuthHandler(password_mgr)
+    )
+    return opener.open(request, timeout=timeout)
+
+
 def http_get(hostname, path, timeout=5, enable_auth=False, username='root', password='', logger=None):
     url = 'http://%s%s' % (hostname, path)
     request = Request(url)
 
-    try:
-        if enable_auth:
-            password_mgr = HTTPPasswordMgrWithDefaultRealm()
-            password_mgr.add_password(None, url, username, password)
-            opener = build_opener(
-                HTTPDigestAuthHandler(password_mgr),
-                HTTPBasicAuthHandler(password_mgr)
-            )
-            response = opener.open(request, timeout=timeout)
-        else:
-            response = urlopen(request, timeout=timeout)
-
-        body = response.read()
+    for credentials in _auth_candidates(enable_auth, username, password):
         try:
-            return body.decode('utf-8')
-        except Exception:
-            return body.decode('latin1', 'ignore')
-    except HTTPError as exc:
-        if logger is not None:
-            logger('http_get: %s returned status %s' % (path, exc.code))
-        return None
-    except URLError as exc:
-        if logger is not None:
-            logger('http_get: error getting %s: %s' % (path, exc))
-        return None
-    except Exception as exc:
-        if logger is not None:
-            logger('http_get: error getting %s: %s' % (path, exc))
-        return None
+            response = _open_request(request, url, timeout, credentials)
+            body = response.read()
+            try:
+                return body.decode('utf-8')
+            except Exception:
+                return body.decode('latin1', 'ignore')
+        except HTTPError as exc:
+            if exc.code == 401:
+                continue
+            if logger is not None:
+                logger('http_get: %s returned status %s' % (path, exc.code))
+            return None
+        except URLError as exc:
+            if logger is not None:
+                logger('http_get: error getting %s: %s' % (path, exc))
+            return None
+        except Exception as exc:
+            if logger is not None:
+                logger('http_get: error getting %s: %s' % (path, exc))
+            return None
+
+    if logger is not None:
+        logger('http_get: %s returned status 401' % path)
+    return None
 
 
 def http_post_json(hostname, path, payload, timeout=5, enable_auth=False, username='root', password='', logger=None):
@@ -86,35 +115,32 @@ def http_post_json(hostname, path, payload, timeout=5, enable_auth=False, userna
 
     request = Request(url, data=body, headers={'Content-Type': 'application/json'})
 
-    try:
-        if enable_auth:
-            password_mgr = HTTPPasswordMgrWithDefaultRealm()
-            password_mgr.add_password(None, url, username, password)
-            opener = build_opener(
-                HTTPDigestAuthHandler(password_mgr),
-                HTTPBasicAuthHandler(password_mgr)
-            )
-            response = opener.open(request, timeout=timeout)
-        else:
-            response = urlopen(request, timeout=timeout)
-
-        raw_body = response.read()
+    for credentials in _auth_candidates(enable_auth, username, password):
         try:
-            return raw_body.decode('utf-8')
-        except Exception:
-            return raw_body.decode('latin1', 'ignore')
-    except HTTPError as exc:
-        if logger is not None:
-            logger('http_post_json: %s returned status %s' % (path, exc.code))
-        return None
-    except URLError as exc:
-        if logger is not None:
-            logger('http_post_json: error posting %s: %s' % (path, exc))
-        return None
-    except Exception as exc:
-        if logger is not None:
-            logger('http_post_json: error posting %s: %s' % (path, exc))
-        return None
+            response = _open_request(request, url, timeout, credentials)
+            raw_body = response.read()
+            try:
+                return raw_body.decode('utf-8')
+            except Exception:
+                return raw_body.decode('latin1', 'ignore')
+        except HTTPError as exc:
+            if exc.code == 401:
+                continue
+            if logger is not None:
+                logger('http_post_json: %s returned status %s' % (path, exc.code))
+            return None
+        except URLError as exc:
+            if logger is not None:
+                logger('http_post_json: error posting %s: %s' % (path, exc))
+            return None
+        except Exception as exc:
+            if logger is not None:
+                logger('http_post_json: error posting %s: %s' % (path, exc))
+            return None
+
+    if logger is not None:
+        logger('http_post_json: %s returned status 401' % path)
+    return None
 
 
 def get_param_cgi_values(hostname, path, timeout=5, enable_auth=False, username='root', password='', logger=None):
@@ -142,44 +168,67 @@ def get_first_value(values, keys, default='unknown'):
 
 
 def get_basic_device_info(hostname, timeout=5, enable_auth=False, username='root', password='', logger=None):
-    response = http_post_json(
-        hostname,
-        '/axis-cgi/basicdeviceinfo.cgi',
-        payload={'apiVersion': '1.3', 'method': 'getAllProperties'},
-        timeout=timeout,
-        enable_auth=enable_auth,
-        username=username,
-        password=password,
-        logger=logger
-    )
+    def _parse_basic_info(response):
+        try:
+            payload = json.loads(response)
+        except Exception as exc:
+            if logger is not None:
+                logger('get_basic_device_info: invalid json response: %s' % exc)
+            return None
 
-    # Fallback for older cameras/firmware that still provide GET semantics.
-    if response is None:
-        response = http_get(
+        if payload.get('error'):
+            return None
+
+        property_list = payload.get('data', {}).get('propertyList', {})
+        if not property_list:
+            return None
+
+        model = str(property_list.get('ProdNbr', 'unknown'))
+        serial = str(property_list.get('SerialNumber', 'unknown'))
+        firmware = str(property_list.get('Version', 'unknown'))
+
+        if model == 'unknown' and serial == 'unknown' and firmware == 'unknown':
+            return None
+
+        return {
+            'model': model,
+            'serial': serial,
+            'firmware': firmware
+        }
+
+    # Try modern and legacy API versions.
+    for api_version in ['1.3', '1.0']:
+        response = http_post_json(
             hostname,
             '/axis-cgi/basicdeviceinfo.cgi',
+            payload={'apiVersion': api_version, 'method': 'getAllProperties'},
             timeout=timeout,
             enable_auth=enable_auth,
             username=username,
             password=password,
             logger=logger
         )
+        if response is None:
+            continue
 
+        info = _parse_basic_info(response)
+        if info is not None:
+            return info
+
+    # Fallback for cameras/firmware exposing GET semantics.
+    response = http_get(
+        hostname,
+        '/axis-cgi/basicdeviceinfo.cgi',
+        timeout=timeout,
+        enable_auth=enable_auth,
+        username=username,
+        password=password,
+        logger=logger
+    )
     if response is None:
         return None
 
-    try:
-        payload = json.loads(response)
-        property_list = payload.get('data', {}).get('propertyList', {})
-        return {
-            'model': str(property_list.get('ProdNbr', 'unknown')),
-            'serial': str(property_list.get('SerialNumber', 'unknown')),
-            'firmware': str(property_list.get('Version', 'unknown'))
-        }
-    except Exception as exc:
-        if logger is not None:
-            logger('get_basic_device_info: invalid json response: %s' % exc)
-        return None
+    return _parse_basic_info(response)
 
 
 def get_firmware_from_param_cgi(hostname, timeout=5, enable_auth=False, username='root', password='', logger=None):
