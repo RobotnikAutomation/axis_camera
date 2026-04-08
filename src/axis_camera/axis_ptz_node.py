@@ -52,6 +52,7 @@ from axis_camera.srv import set_brightness, set_brightnessResponse
 from axis_camera.srv import set_contrast, set_contrastResponse
 from axis_camera.srv import set_saturation, set_saturationResponse
 from axis_camera.srv import set_day_night_mode, set_day_night_modeResponse
+from axis_camera.srv import set_day_night_shift_level, set_day_night_shift_levelResponse
 from axis_camera.srv import set_white_balance, set_white_balanceResponse
 from axis_camera.srv import get_image_settings, get_image_settingsResponse
 
@@ -157,6 +158,7 @@ class AxisPTZ(threading.Thread):
         self.set_contrast_service = rospy.Service('~set_contrast', set_contrast, self.setContrastServiceCb)
         self.set_saturation_service = rospy.Service('~set_saturation', set_saturation, self.setSaturationServiceCb)
         self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', set_day_night_mode, self.setDayNightModeServiceCb)
+        self.set_day_night_shift_level_service = rospy.Service('~set_day_night_shift_level', set_day_night_shift_level, self.setDayNightShiftLevelServiceCb)
         self.set_white_balance_service = rospy.Service('~set_white_balance', set_white_balance, self.setWhiteBalanceServiceCb)
         self.get_image_settings_service = rospy.Service('~get_image_settings', get_image_settings, self.getImageSettingsServiceCb)
 
@@ -301,6 +303,14 @@ class AxisPTZ(threading.Thread):
         else:
             rospy.logerr('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
         return set_day_night_modeResponse(success=result['success'], message=result['message'])
+
+    def setDayNightShiftLevelServiceCb(self, req):
+        result = self.controller.setDayNightShiftLevel(req.shift_level)
+        if result['success']:
+            rospy.loginfo('%s:setDayNightShiftLevelServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setDayNightShiftLevelServiceCb: %s', rospy.get_name(), result['message'])
+        return set_day_night_shift_levelResponse(success=result['success'], message=result['message'])
 
     def setWhiteBalanceServiceCb(self, req):
         result = self.controller.setWhiteBalance(req.white_balance)

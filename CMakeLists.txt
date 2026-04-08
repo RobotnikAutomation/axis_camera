@@ -40,6 +40,7 @@ FILES
   set_saturation.srv
   set_white_balance.srv
   set_day_night_mode.srv
+  set_day_night_shift_level.srv
   get_image_settings.srv
 )
 

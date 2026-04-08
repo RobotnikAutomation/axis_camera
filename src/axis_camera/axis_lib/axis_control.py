@@ -690,6 +690,24 @@ class ControlAxis():
                     self._last_known_image_settings['is_night_mode_active'] = False
         return result
 
+    def setDayNightShiftLevel(self, shift_level):
+        shift_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.DayNight', 'ShiftLevel')
+        if shift_range[0] is not None:
+            min_shift, max_shift = shift_range
+        else:
+            min_shift, max_shift = 0, 100
+
+        if shift_level < min_shift or shift_level > max_shift:
+            return {
+                'success': False,
+                'message': 'shift_level value %d is out of range [%d, %d]' % (shift_level, min_shift, max_shift)
+            }
+
+        result = self._update_parameter_path('ImageSource.I0.DayNight.ShiftLevel', shift_level, 'day_night_shift_level')
+        if result['success']:
+            self._last_known_image_settings['day_night_shift_level'] = shift_level
+        return result
+
     def getImageSettings(self):
         ret = {
             'success': False,
