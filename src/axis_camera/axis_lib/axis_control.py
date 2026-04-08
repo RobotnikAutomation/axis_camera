@@ -604,12 +604,33 @@ class ControlAxis():
         return result
 
     def setWhiteBalance(self, white_balance):
+        white_balance = white_balance.strip()
+        if not white_balance:
+            return {
+                'success': False,
+                'message': 'white_balance mode cannot be empty'
+            }
+
         parameter_path, error_message = self._get_white_balance_parameter_path()
         if parameter_path is None:
             return {
                 'success': False,
                 'message': error_message
             }
+
+        enum_modes = None
+        parts = parameter_path.rsplit('.', 1)
+        if len(parts) == 2:
+            enum_modes = self._get_parameter_enum_values_from_definitions(parts[0], parts[1])
+
+        # If camera exposes enum capabilities, validate strictly against those values.
+        if enum_modes:
+            if white_balance not in enum_modes:
+                modes_text = ', '.join(sorted(enum_modes))
+                return {
+                    'success': False,
+                    'message': 'unsupported white_balance mode "%s". Supported modes: %s' % (white_balance, modes_text)
+                }
 
         supported_modes, error_message = self._get_supported_white_balance_modes(parameter_path)
         if supported_modes is None:
@@ -618,7 +639,9 @@ class ControlAxis():
                 'message': error_message
             }
 
-        if white_balance not in supported_modes:
+        # If enum capabilities are unavailable, supported_modes may come from fallback.
+        # In that case, allow write-through and let camera return the authoritative result.
+        if enum_modes and white_balance not in supported_modes:
             modes_text = ', '.join(sorted(supported_modes))
             return {
                 'success': False,
