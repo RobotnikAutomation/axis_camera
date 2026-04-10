@@ -137,6 +137,8 @@ class AxisPTZ(threading.Thread):
         self.image_settings_pub_period = rospy.Duration(1.0 / self.image_settings_pub_rate)
         self.t_last_image_settings_pub = rospy.Time(0)
         self.image_settings_metadata = self.controller.getImageSettingsMetadata()
+        self.image_settings_error_active = False
+        self.last_image_settings_error_message = ''
 
     def rosSetup(self):
         """
@@ -556,7 +558,17 @@ class AxisPTZ(threading.Thread):
         msg.day_night_shift_level_max = metadata['day_night_shift_level_max']
 
         if not result['success']:
-            rospy.logerr_throttle(5.0, '%s:publishImageSettings: %s', rospy.get_name(), result['message'])
+            is_new_error = (not self.image_settings_error_active) or (
+                self.last_image_settings_error_message != result['message']
+            )
+            if is_new_error:
+                rospy.logerr('%s:publishImageSettings: %s', rospy.get_name(), result['message'])
+            self.image_settings_error_active = True
+            self.last_image_settings_error_message = result['message']
+        elif self.image_settings_error_active:
+            rospy.loginfo('%s:publishImageSettings: image settings read recovered', rospy.get_name())
+            self.image_settings_error_active = False
+            self.last_image_settings_error_message = ''
 
         self.image_settings_pub.publish(msg)
         self.image_settings_current_pub.publish(msg)
