@@ -226,6 +226,47 @@ class ControlAxis():
 
         return ret
 
+    def _normalize_parameter_value(self, value):
+        if value is None:
+            return None
+        return str(value).strip()
+
+    def _verify_and_rollback_parameter_update(self, parameter_path, requested_value, previous_value, result, success_label):
+        current_value = self._normalize_parameter_value(self._read_parameter_value(parameter_path))
+        requested_value = self._normalize_parameter_value(requested_value)
+        previous_value = self._normalize_parameter_value(previous_value)
+
+        # If the camera does not let us read back, keep original result.
+        if current_value is None:
+            return result
+
+        # Requested value is exactly the one applied.
+        if current_value == requested_value:
+            return result
+
+        # Value differs from requested one (firmware clamp or transform). Try rollback.
+        if previous_value is not None and current_value != previous_value:
+            rollback_result = self._update_parameter_path(parameter_path, previous_value, success_label)
+            rollback_value = self._normalize_parameter_value(self._read_parameter_value(parameter_path))
+
+            if rollback_result['success'] and rollback_value == previous_value:
+                result['message'] = (
+                    'camera applied %s=%s instead of requested %s; restored previous value %s'
+                ) % (success_label, current_value, requested_value, previous_value)
+            else:
+                result['message'] = (
+                    'camera applied %s=%s instead of requested %s and rollback failed'
+                ) % (success_label, current_value, requested_value)
+        else:
+            result['message'] = 'camera applied %s=%s instead of requested %s' % (
+                success_label,
+                current_value,
+                requested_value
+            )
+
+        result['success'] = False
+        return result
+
     def _get_saturation_parameter_name(self):
         # First check the sensor parameter list
         try:
@@ -455,6 +496,29 @@ class ControlAxis():
 
         return ret
 
+    def _update_sensor_parameter_verified(self, parameter_name, value, success_label):
+        parameter_path = 'ImageSource.I0.Sensor.%s' % parameter_name
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_sensor_parameter(parameter_name, value, success_label)
+        return self._verify_and_rollback_parameter_update(
+            parameter_path,
+            value,
+            previous_value,
+            result,
+            success_label
+        )
+
+    def _update_parameter_path_verified(self, parameter_path, value, success_label):
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_parameter_path(parameter_path, value, success_label)
+        return self._verify_and_rollback_parameter_update(
+            parameter_path,
+            value,
+            previous_value,
+            result,
+            success_label
+        )
+
     def sendPTZCommand(self, pan, tilt, zoom):
         ret = {
             'exception': False,
@@ -551,36 +615,34 @@ class ControlAxis():
         return ptz_read
 
     def setBrightness(self, brightness):
-        if brightness < -100 or brightness > 100:
+        br_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'Brightness')
+        min_br, max_br = br_range if br_range[0] is not None else (-100, 100)
+        if brightness < min_br or brightness > max_br:
             return {
                 'success': False,
-                'message': 'brightness value %d is out of range [-100, 100]' % brightness
+                'message': 'brightness value %d is out of range [%d, %d]' % (brightness, min_br, max_br)
             }
 
-        result = self._update_sensor_parameter('Brightness', brightness, 'brightness')
+        result = self._update_sensor_parameter_verified('Brightness', brightness, 'brightness')
         if result['success']:
             self._last_known_image_settings['brightness'] = brightness
         return result
 
     def setContrast(self, contrast):
-        if contrast < -100 or contrast > 100:
+        ct_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'Contrast')
+        min_ct, max_ct = ct_range if ct_range[0] is not None else (-100, 100)
+        if contrast < min_ct or contrast > max_ct:
             return {
                 'success': False,
-                'message': 'contrast value %d is out of range [-100, 100]' % contrast
+                'message': 'contrast value %d is out of range [%d, %d]' % (contrast, min_ct, max_ct)
             }
 
-        result = self._update_sensor_parameter('Contrast', contrast, 'contrast')
+        result = self._update_sensor_parameter_verified('Contrast', contrast, 'contrast')
         if result['success']:
             self._last_known_image_settings['contrast'] = contrast
         return result
 
     def setSaturation(self, saturation):
-        if saturation < -100 or saturation > 100:
-            return {
-                'success': False,
-                'message': 'saturation value %d is out of range [-100, 100]' % saturation
-            }
-
         parameter_name, error_message = self._get_saturation_parameter_name()
         if parameter_name is None:
             return {
@@ -588,18 +650,44 @@ class ControlAxis():
                 'message': error_message
             }
 
+        # Known VAPIX ranges per parameter name as fallback when listdefinitions is unavailable.
+        _KNOWN_SATURATION_RANGES = {
+            'Saturation': (-100, 100),
+            'ColorLevel': (0, 100),
+        }
+        sat_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', parameter_name)
+        if sat_range[0] is not None:
+            min_sat, max_sat = sat_range
+        else:
+            min_sat, max_sat = _KNOWN_SATURATION_RANGES.get(parameter_name, (-100, 100))
+
+        if saturation < min_sat or saturation > max_sat:
+            return {
+                'success': False,
+                'message': 'saturation value %d is out of range [%d, %d]' % (saturation, min_sat, max_sat)
+            }
+
         # Try the detected/default parameter name
-        result = self._update_sensor_parameter(parameter_name, saturation, 'saturation')
+        result = self._update_sensor_parameter_verified(parameter_name, saturation, 'saturation')
         if result['success']:
             self._last_known_image_settings['saturation'] = saturation
             return result
 
-        # If Saturation failed, try ColorLevel as fallback
+        # If Saturation failed, try ColorLevel as fallback — but validate its range first.
         if parameter_name == 'Saturation':
-            result = self._update_sensor_parameter('ColorLevel', saturation, 'saturation')
-            if result['success']:
-                self._last_known_image_settings['saturation'] = saturation
-                return result
+            cl_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.Sensor', 'ColorLevel')
+            cl_min = cl_range[0] if cl_range[0] is not None else 0
+            cl_max = cl_range[1] if cl_range[1] is not None else 100
+            if cl_min <= saturation <= cl_max:
+                result = self._update_sensor_parameter_verified('ColorLevel', saturation, 'saturation')
+                if result['success']:
+                    self._last_known_image_settings['saturation'] = saturation
+                    return result
+            else:
+                return {
+                    'success': False,
+                    'message': 'saturation value %d is out of range [%d, %d] for ColorLevel' % (saturation, cl_min, cl_max)
+                }
 
         return result
 
@@ -726,7 +814,7 @@ class ControlAxis():
                 'message': 'shift_level value %d is out of range [%d, %d]' % (shift_level, min_shift, max_shift)
             }
 
-        result = self._update_parameter_path('ImageSource.I0.DayNight.ShiftLevel', shift_level, 'day_night_shift_level')
+        result = self._update_parameter_path_verified('ImageSource.I0.DayNight.ShiftLevel', shift_level, 'day_night_shift_level')
         if result['success']:
             self._last_known_image_settings['day_night_shift_level'] = shift_level
         return result
