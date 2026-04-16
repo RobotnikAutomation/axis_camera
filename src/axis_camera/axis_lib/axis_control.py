@@ -15,6 +15,56 @@ class ControlAxis():
     def __init__(self, hostname):
         self.hostname = hostname
 
+    def getPTZLimits(self):
+        """
+            Gets the PTZ limits reported by the camera.
+        """
+        ptz_limits = {
+            'focus_min': None,
+            'focus_max': None,
+            'iris_min': None,
+            'iris_max': None,
+            'error_reading': False,
+            'error_reading_msg': ''
+        }
+        conn = httplib.HTTPConnection(self.hostname)
+        params = {
+            'query': 'limits',
+            'camera': 1
+        }
+
+        try:
+            conn.request("GET", "/axis-cgi/com/ptz.cgi?%s" % urllib_parse.urlencode(params))
+            response = conn.getresponse()
+            if response.status == 200:
+                body = response.read()
+                try:
+                    parsed_params = dict([s.split('=', 2) for s in body.splitlines()])
+                except:
+                    parsed_params = dict([s.decode().split('=', 2) for s in body.splitlines()])
+
+                if 'MinFocus' in parsed_params:
+                    ptz_limits['focus_min'] = float(parsed_params['MinFocus'])
+                if 'MaxFocus' in parsed_params:
+                    ptz_limits['focus_max'] = float(parsed_params['MaxFocus'])
+                if 'MinIris' in parsed_params:
+                    ptz_limits['iris_min'] = float(parsed_params['MinIris'])
+                if 'MaxIris' in parsed_params:
+                    ptz_limits['iris_max'] = float(parsed_params['MaxIris'])
+        except socket.error as e:
+            ptz_limits['error_reading'] = True
+            ptz_limits['error_reading_msg'] = e
+        except socket.timeout as e:
+            ptz_limits['error_reading'] = True
+            ptz_limits['error_reading_msg'] = e
+        except ValueError as e:
+            ptz_limits['error_reading'] = True
+            ptz_limits['error_reading_msg'] = e
+        finally:
+            conn.close()
+
+        return ptz_limits
+
     def sendPTZCommand(self, pan=None, tilt=None, zoom=None, focus=None, autofocus=None, iris=None, autoiris=None):
         ret = {
             'exception': False,

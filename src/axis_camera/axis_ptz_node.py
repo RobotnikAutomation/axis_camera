@@ -116,6 +116,16 @@ class AxisPTZ(threading.Thread):
         self.iris_supported = True
         self.focus_support_warned = False
         self.iris_support_warned = False
+        self.focus_min_value = 1.0
+        self.focus_max_value = 9999.0
+        self.iris_min_value = 1.0
+        self.iris_max_value = 9999.0
+        
+        # Detect effective focus range at runtime
+        self.effective_focus_min_raw = None
+        self.effective_focus_min_percent = None
+        self.last_commanded_focus_percent = None
+        self.focus_clipping_warned = False
 
         # Timer to get/release ptz control
         if(self.use_control_timeout):
@@ -133,6 +143,84 @@ class AxisPTZ(threading.Thread):
         self.control_mode = 'position'
         self.t_last_command_sent = rospy.Time(0)
         self.t_control_loop = 1 / self.rate
+
+        self._readPTZLimitsFromCamera()
+
+    def _readPTZLimitsFromCamera(self):
+        ptz_limits = self.controller.getPTZLimits()
+        if ptz_limits['error_reading']:
+            rospy.logwarn('%s:_readPTZLimitsFromCamera: using default focus limits [%.1f, %.1f] and iris limits [%.1f, %.1f]: %s', rospy.get_name(), self.focus_min_value, self.focus_max_value, self.iris_min_value, self.iris_max_value, ptz_limits['error_reading_msg'])
+            return
+
+        focus_min = ptz_limits.get('focus_min')
+        focus_max = ptz_limits.get('focus_max')
+        if focus_min is None or focus_max is None or focus_max <= focus_min:
+            rospy.logwarn('%s:_readPTZLimitsFromCamera: camera did not provide valid focus limits, using defaults [%.1f, %.1f]', rospy.get_name(), self.focus_min_value, self.focus_max_value)
+        else:
+            self.focus_min_value = focus_min
+            self.focus_max_value = focus_max
+
+        iris_min = ptz_limits.get('iris_min')
+        iris_max = ptz_limits.get('iris_max')
+        if iris_min is None or iris_max is None or iris_max <= iris_min:
+            rospy.logwarn('%s:_readPTZLimitsFromCamera: camera did not provide valid iris limits, using defaults [%.1f, %.1f]', rospy.get_name(), self.iris_min_value, self.iris_max_value)
+        else:
+            self.iris_min_value = iris_min
+            self.iris_max_value = iris_max
+
+    def _focusRawToPercentage(self, focus_value):
+        if self.focus_max_value <= self.focus_min_value:
+            return 0.0
+
+        clamped_focus = min(max(focus_value, self.focus_min_value), self.focus_max_value)
+        return ((clamped_focus - self.focus_min_value) / (self.focus_max_value - self.focus_min_value)) * 100.0
+
+    def _focusPercentageToRaw(self, focus_percentage):
+        clamped_percentage = min(max(focus_percentage, 0.0), 100.0)
+        return self.focus_min_value + ((self.focus_max_value - self.focus_min_value) * (clamped_percentage / 100.0))
+    
+    def _updateEffectiveFocusFromCommand(self, commanded_focus_percent, actual_focus_percent, autofocus_enabled):
+        """
+        Learn effective focus minimum only from manual command responses.
+        This avoids false estimates from passive readings.
+        """
+        if autofocus_enabled or commanded_focus_percent is None:
+            return
+
+        # Ignore tiny deviations due to quantization/noise.
+        tolerance_percent = 2.0
+        if actual_focus_percent <= commanded_focus_percent + tolerance_percent:
+            return
+
+        # With no prior estimate, only trust low commands to infer the lower bound.
+        if self.effective_focus_min_percent is None and commanded_focus_percent > 50.0:
+            return
+
+        candidate_min_percent = actual_focus_percent
+        candidate_min_raw = self._focusPercentageToRaw(candidate_min_percent)
+
+        if self.effective_focus_min_percent is None or candidate_min_percent < self.effective_focus_min_percent:
+            self.effective_focus_min_percent = candidate_min_percent
+            self.effective_focus_min_raw = candidate_min_raw
+    
+    def _checkFocusClipping(self, commanded_focus_percent, actual_focus_percent):
+        """
+        Detect if camera clipped a focus command and warn the user.
+        """
+        # Only warn once per session to avoid log spam
+        if self.focus_clipping_warned:
+            return
+        
+        # If commanded is below effective minimum, warn
+        if self.effective_focus_min_percent is not None and commanded_focus_percent < self.effective_focus_min_percent:
+            # Check if this is actually being clipped (not just initial sync)
+            if abs(actual_focus_percent - self.effective_focus_min_percent) < 2.0:
+                rospy.logwarn(
+                    '%s:Focus command limited by camera: requested %.1f%%, effective minimum is %.1f%%. '
+                    'Camera will clamp to [%.1f%%, 100%%] in current conditions.',
+                    rospy.get_name(), commanded_focus_percent, self.effective_focus_min_percent, self.effective_focus_min_percent
+                )
+                self.focus_clipping_warned = True
 
     def rosSetup(self):
         """
@@ -363,7 +451,22 @@ class AxisPTZ(threading.Thread):
             rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
             return response
 
-        focus_value = None if req.autofocus else req.focus
+        if not req.autofocus and (req.focus < 0.0 or req.focus > 100.0):
+            response.ret = False
+            response.message = 'Focus percentage must be within [0, 100]'
+            rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
+            return response
+
+        focus_value = None if req.autofocus else self._focusPercentageToRaw(req.focus)
+        
+        # Warn if requesting focus below detected effective minimum
+        if not req.autofocus and self.effective_focus_min_percent is not None and req.focus < self.effective_focus_min_percent:
+            rospy.logwarn(
+                '%s:setFocusService: Focus request %.1f%% is below effective minimum %.1f%%. '
+                'Camera will likely clamp to %.1f%% in current conditions.',
+                rospy.get_name(), req.focus, self.effective_focus_min_percent, self.effective_focus_min_percent
+            )
+        
         control = self.controller.sendPTZCommand(focus=focus_value, autofocus=req.autofocus)
         if not self._commandSucceeded(control, 'focus'):
             response.ret = False
@@ -371,8 +474,9 @@ class AxisPTZ(threading.Thread):
             return response
 
         self.desired_autofocus = req.autofocus
-        if focus_value is not None:
-            self.desired_focus = focus_value
+        if not req.autofocus:
+            self.desired_focus = req.focus
+            self.last_commanded_focus_percent = req.focus
 
         response.ret = True
         response.message = 'Focus command sent'
@@ -396,6 +500,12 @@ class AxisPTZ(threading.Thread):
         if not req.autoiris and not math.isfinite(req.iris):
             response.ret = False
             response.message = 'Invalid iris value'
+            rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
+            return response
+
+        if not req.autoiris and (req.iris < self.iris_min_value or req.iris > self.iris_max_value):
+            response.ret = False
+            response.message = 'Iris value must be within [%.1f, %.1f]' % (self.iris_min_value, self.iris_max_value)
             rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
             return response
 
@@ -462,8 +572,17 @@ class AxisPTZ(threading.Thread):
             self.current_ptz.zoom = ptz_read["zoom"]
             self.current_ptz.iris = ptz_read["iris"]
             self.current_ptz.autoiris = ptz_read["autoiris"]
-            self.current_ptz.focus = ptz_read["focus"]
+            self.current_ptz.focus = self._focusRawToPercentage(ptz_read["focus"])
             self.current_ptz.autofocus = ptz_read["autofocus"]
+
+            # If we just commanded focus, check if it was clipped
+            if not ptz_read["autofocus"] and self.last_commanded_focus_percent is not None:
+                self._updateEffectiveFocusFromCommand(
+                    self.last_commanded_focus_percent,
+                    self.current_ptz.focus,
+                    self.current_ptz.autofocus
+                )
+                self._checkFocusClipping(self.last_commanded_focus_percent, self.current_ptz.focus)
         
             if not self.ptz_syncronized:
                 self.desired_pan = self.invert_pan*self.current_ptz.pan 
@@ -617,6 +736,10 @@ class AxisPTZ(threading.Thread):
         stat.add("pan", self.current_ptz.pan)
         stat.add("tilt", self.current_ptz.tilt)
         stat.add("zoom", self.current_ptz.zoom)
+        stat.add("focus_declared_range_percent", "[0.0, 100.0]")
+        if self.effective_focus_min_percent is not None:
+            stat.add("focus_effective_range_percent", "[%.1f, 100.0]" % self.effective_focus_min_percent)
+        stat.add("focus_supported", self.focus_supported)
         
         return stat
 
