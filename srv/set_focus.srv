@@ -1,5 +1,0 @@
-float32 focus
-bool autofocus
----
-bool ret
-string message

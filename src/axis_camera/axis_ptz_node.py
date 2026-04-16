@@ -40,8 +40,8 @@ import rospy
 from std_srvs.srv import Empty
 from sensor_msgs.msg import JointState
 
-from axis_camera.srv import set_focus, set_focusResponse
-from axis_camera.srv import set_iris, set_irisResponse
+from robotnik_msgs.srv import SetCameraFocus, SetCameraFocusResponse
+from robotnik_msgs.srv import SetCameraIris, SetCameraIrisResponse
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
@@ -234,8 +234,8 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
-        self.focus_service = rospy.Service('~set_focus', set_focus, self.setFocusService)
-        self.iris_service = rospy.Service('~set_iris', set_iris, self.setIrisService)
+        self.focus_service = rospy.Service('~set_focus', SetCameraFocus, self.setFocusService)
+        self.iris_service = rospy.Service('~set_iris', SetCameraIris, self.setIrisService)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -431,7 +431,7 @@ class AxisPTZ(threading.Thread):
         self.t_last_command_sent = rospy.Time.now()
 
     def setFocusService(self, req):
-        response = set_focusResponse()
+        response = SetCameraFocusResponse()
 
         if not self.ptz_syncronized:
             response.ret = False
@@ -445,45 +445,45 @@ class AxisPTZ(threading.Thread):
             rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
             return response
 
-        if not req.autofocus and not math.isfinite(req.focus):
+        if not req.auto and not math.isfinite(req.value):
             response.ret = False
             response.message = 'Invalid focus value'
             rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
             return response
 
-        if not req.autofocus and (req.focus < 0.0 or req.focus > 100.0):
+        if not req.auto and (req.value < 0.0 or req.value > 100.0):
             response.ret = False
             response.message = 'Focus percentage must be within [0, 100]'
             rospy.logwarn('%s:setFocusService: %s', rospy.get_name(), response.message)
             return response
 
-        focus_value = None if req.autofocus else self._focusPercentageToRaw(req.focus)
+        focus_value = None if req.auto else self._focusPercentageToRaw(req.value)
         
         # Warn if requesting focus below detected effective minimum
-        if not req.autofocus and self.effective_focus_min_percent is not None and req.focus < self.effective_focus_min_percent:
+        if not req.auto and self.effective_focus_min_percent is not None and req.value < self.effective_focus_min_percent:
             rospy.logwarn(
                 '%s:setFocusService: Focus request %.1f%% is below effective minimum %.1f%%. '
                 'Camera will likely clamp to %.1f%% in current conditions.',
-                rospy.get_name(), req.focus, self.effective_focus_min_percent, self.effective_focus_min_percent
+                rospy.get_name(), req.value, self.effective_focus_min_percent, self.effective_focus_min_percent
             )
         
-        control = self.controller.sendPTZCommand(focus=focus_value, autofocus=req.autofocus)
+        control = self.controller.sendPTZCommand(focus=focus_value, autofocus=req.auto)
         if not self._commandSucceeded(control, 'focus'):
             response.ret = False
             response.message = self._formatCommandError(control, 'focus')
             return response
 
-        self.desired_autofocus = req.autofocus
-        if not req.autofocus:
-            self.desired_focus = req.focus
-            self.last_commanded_focus_percent = req.focus
+        self.desired_autofocus = req.auto
+        if not req.auto:
+            self.desired_focus = req.value
+            self.last_commanded_focus_percent = req.value
 
         response.ret = True
         response.message = 'Focus command sent'
         return response
 
     def setIrisService(self, req):
-        response = set_irisResponse()
+        response = SetCameraIrisResponse()
 
         if not self.ptz_syncronized:
             response.ret = False
@@ -497,26 +497,26 @@ class AxisPTZ(threading.Thread):
             rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
             return response
 
-        if not req.autoiris and not math.isfinite(req.iris):
+        if not req.auto and not math.isfinite(req.value):
             response.ret = False
             response.message = 'Invalid iris value'
             rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
             return response
 
-        if not req.autoiris and (req.iris < self.iris_min_value or req.iris > self.iris_max_value):
+        if not req.auto and (req.value < self.iris_min_value or req.value > self.iris_max_value):
             response.ret = False
             response.message = 'Iris value must be within [%.1f, %.1f]' % (self.iris_min_value, self.iris_max_value)
             rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
             return response
 
-        iris_value = None if req.autoiris else req.iris
-        control = self.controller.sendPTZCommand(iris=iris_value, autoiris=req.autoiris)
+        iris_value = None if req.auto else req.value
+        control = self.controller.sendPTZCommand(iris=iris_value, autoiris=req.auto)
         if not self._commandSucceeded(control, 'iris'):
             response.ret = False
             response.message = self._formatCommandError(control, 'iris')
             return response
 
-        self.desired_autoiris = req.autoiris
+        self.desired_autoiris = req.auto
         if iris_value is not None:
             self.desired_iris = iris_value
 

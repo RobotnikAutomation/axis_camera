@@ -97,39 +97,39 @@ relative: false"
 The PTZ node also exposes two additional services to control optics parameters.
 These services are independent from continuous PTZ command publishing.
 
-* `~set_focus` (`axis_camera/set_focus`)
+* `~set_focus` (`robotnik_msgs/SetCameraFocus`)
   * request fields:
-    * `focus` (`float32`): manual focus value
-    * `autofocus` (`bool`): if `true`, camera autofocus is enabled and `focus` value is ignored by the camera
-* `~set_iris` (`axis_camera/set_iris`)
+    * `value` (`float32`): manual focus value in percentage (`0.0` to `100.0`)
+    * `auto` (`bool`): if `true`, camera autofocus is enabled and `value` is ignored by the camera
+* `~set_iris` (`robotnik_msgs/SetCameraIris`)
   * request fields:
-    * `iris` (`float32`): manual iris value
-    * `autoiris` (`bool`): if `true`, camera autoiris is enabled and `iris` value is ignored by the camera
+    * `value` (`float32`): manual iris value in camera units (between camera-reported min and max)
+    * `auto` (`bool`): if `true`, camera autoiris is enabled and `value` is ignored by the camera
 
 Examples:
 
 Enable autofocus:
 ```
-rosservice call /axis_camera_ptz/set_focus "focus: 0.0
-autofocus: true"
+rosservice call /axis_camera_ptz/set_focus "value: 0.0
+auto: true"
 ```
 
 Set manual focus:
 ```
-rosservice call /axis_camera_ptz/set_focus "focus: 1200.0
-autofocus: false"
+rosservice call /axis_camera_ptz/set_focus "value: 50.0
+auto: false"
 ```
 
 Enable autoiris:
 ```
-rosservice call /axis_camera_ptz/set_iris "iris: 0.0
-autoiris: true"
+rosservice call /axis_camera_ptz/set_iris "value: 0.0
+auto: true"
 ```
 
 Set manual iris:
 ```
-rosservice call /axis_camera_ptz/set_iris "iris: 500.0
-autoiris: false"
+rosservice call /axis_camera_ptz/set_iris "value: 500.0
+auto: false"
 ```
 
 Notes:
