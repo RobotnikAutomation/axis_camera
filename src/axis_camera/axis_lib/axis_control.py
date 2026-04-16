@@ -691,6 +691,35 @@ class ControlAxis():
 
         return result
 
+    def getWhiteBalanceModes(self):
+        parameter_path, error_message = self._get_white_balance_parameter_path()
+        if parameter_path is None:
+            return {
+                'success': False,
+                'message': error_message,
+                'modes': []
+            }
+
+        enum_modes = None
+        parts = parameter_path.rsplit('.', 1)
+        if len(parts) == 2:
+            enum_modes = self._get_parameter_enum_values_from_definitions(parts[0], parts[1])
+
+        supported_modes, error_message = self._get_supported_white_balance_modes(parameter_path)
+        if supported_modes is None:
+            return {
+                'success': False,
+                'message': error_message,
+                'modes': []
+            }
+
+        modes = sorted(enum_modes) if enum_modes else sorted(supported_modes)
+        return {
+            'success': True,
+            'message': 'white_balance modes retrieved',
+            'modes': modes
+        }
+
     def setWhiteBalance(self, white_balance):
         white_balance = white_balance.strip()
         if not white_balance:

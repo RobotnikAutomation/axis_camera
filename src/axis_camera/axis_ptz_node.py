@@ -51,7 +51,8 @@ import diagnostic_msgs
 from axis_camera.axis_lib.axis_control import ControlAxis
 from robotnik_msgs.srv import SetInt16, SetInt16Response
 from robotnik_msgs.srv import SetString, SetStringResponse
-from robotnik_msgs.srv import get_image_settings, get_image_settingsResponse
+from robotnik_msgs.srv import GetStringList, GetStringListResponse
+from robotnik_msgs.srv import GetImageSettings, GetImageSettingsResponse
 
 class AxisPTZ(threading.Thread):
     """
@@ -150,7 +151,6 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Publish image settings state (base + explicit current alias)
         self.image_settings_pub = rospy.Publisher("~image_settings", ImageSettings, queue_size=10)
-        self.image_settings_current_pub = rospy.Publisher("~image_settings_current", ImageSettings, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.set_brightness_service = rospy.Service('~set_brightness', SetInt16, self.setBrightnessServiceCb)
@@ -159,7 +159,8 @@ class AxisPTZ(threading.Thread):
         self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', SetString, self.setDayNightModeServiceCb)
         self.set_day_night_shift_level_service = rospy.Service('~set_day_night_shift_level', SetInt16, self.setDayNightShiftLevelServiceCb)
         self.set_white_balance_service = rospy.Service('~set_white_balance', SetString, self.setWhiteBalanceServiceCb)
-        self.get_image_settings_service = rospy.Service('~get_image_settings', get_image_settings, self.getImageSettingsServiceCb)
+        self.get_white_balance_mode_service = rospy.Service('~get_white_balance_mode', GetStringList, self.getWhiteBalanceModeServiceCb)
+        self.get_image_settings_service = rospy.Service('~get_image_settings', GetImageSettings, self.getImageSettingsServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -319,6 +320,17 @@ class AxisPTZ(threading.Thread):
             rospy.logerr('%s:setWhiteBalanceServiceCb: %s', rospy.get_name(), result['message'])
         return SetStringResponse(ret=ReturnMessage(success=result['success'], message=result['message']))
 
+    def getWhiteBalanceModeServiceCb(self, req):
+        result = self.controller.getWhiteBalanceModes()
+        if result['success']:
+            rospy.loginfo('%s:getWhiteBalanceModeServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:getWhiteBalanceModeServiceCb: %s', rospy.get_name(), result['message'])
+        return GetStringListResponse(
+            strings=result['modes'],
+            ret=ReturnMessage(success=result['success'], message=result['message'])
+        )
+
     def getImageSettingsServiceCb(self, req):
         result = self.controller.getImageSettings()
         metadata = self.image_settings_metadata
@@ -353,7 +365,7 @@ class AxisPTZ(threading.Thread):
             rospy.loginfo('%s:getImageSettingsServiceCb: retrieved image settings', rospy.get_name())
         else:
             rospy.logerr('%s:getImageSettingsServiceCb: %s', rospy.get_name(), result['message'])
-        return get_image_settingsResponse(
+        return GetImageSettingsResponse(
             success=result['success'],
             message=result['message'],
             image_settings=image_settings_msg
@@ -591,7 +603,6 @@ class AxisPTZ(threading.Thread):
             self.last_image_settings_error_message = ''
 
         self.image_settings_pub.publish(msg)
-        self.image_settings_current_pub.publish(msg)
         
         
     def get_data(self):
