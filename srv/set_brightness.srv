@@ -1,4 +1,0 @@
-int32 brightness   # [-100, 100]
----
-bool success
-string message

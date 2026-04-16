@@ -43,18 +43,15 @@ from sensor_msgs.msg import JointState
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
+from robotnik_msgs.msg import ImageSettings
+from robotnik_msgs.msg import ReturnMessage
 import diagnostic_updater
 import diagnostic_msgs
-from axis_camera.msg import ImageSettings
 
 from axis_camera.axis_lib.axis_control import ControlAxis
-from axis_camera.srv import set_brightness, set_brightnessResponse
-from axis_camera.srv import set_contrast, set_contrastResponse
-from axis_camera.srv import set_saturation, set_saturationResponse
-from axis_camera.srv import set_day_night_mode, set_day_night_modeResponse
-from axis_camera.srv import set_day_night_shift_level, set_day_night_shift_levelResponse
-from axis_camera.srv import set_white_balance, set_white_balanceResponse
-from axis_camera.srv import get_image_settings, get_image_settingsResponse
+from robotnik_msgs.srv import SetInt16, SetInt16Response
+from robotnik_msgs.srv import SetString, SetStringResponse
+from robotnik_msgs.srv import get_image_settings, get_image_settingsResponse
 
 class AxisPTZ(threading.Thread):
     """
@@ -156,12 +153,12 @@ class AxisPTZ(threading.Thread):
         self.image_settings_current_pub = rospy.Publisher("~image_settings_current", ImageSettings, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
-        self.set_brightness_service = rospy.Service('~set_brightness', set_brightness, self.setBrightnessServiceCb)
-        self.set_contrast_service = rospy.Service('~set_contrast', set_contrast, self.setContrastServiceCb)
-        self.set_saturation_service = rospy.Service('~set_saturation', set_saturation, self.setSaturationServiceCb)
-        self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', set_day_night_mode, self.setDayNightModeServiceCb)
-        self.set_day_night_shift_level_service = rospy.Service('~set_day_night_shift_level', set_day_night_shift_level, self.setDayNightShiftLevelServiceCb)
-        self.set_white_balance_service = rospy.Service('~set_white_balance', set_white_balance, self.setWhiteBalanceServiceCb)
+        self.set_brightness_service = rospy.Service('~set_brightness', SetInt16, self.setBrightnessServiceCb)
+        self.set_contrast_service = rospy.Service('~set_contrast', SetInt16, self.setContrastServiceCb)
+        self.set_saturation_service = rospy.Service('~set_saturation', SetInt16, self.setSaturationServiceCb)
+        self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', SetString, self.setDayNightModeServiceCb)
+        self.set_day_night_shift_level_service = rospy.Service('~set_day_night_shift_level', SetInt16, self.setDayNightShiftLevelServiceCb)
+        self.set_white_balance_service = rospy.Service('~set_white_balance', SetString, self.setWhiteBalanceServiceCb)
         self.get_image_settings_service = rospy.Service('~get_image_settings', get_image_settings, self.getImageSettingsServiceCb)
 
         # Diagnostic Updater
@@ -274,56 +271,84 @@ class AxisPTZ(threading.Thread):
         return {}
 
     def setBrightnessServiceCb(self, req):
-        result = self.controller.setBrightness(req.brightness)
+        result = self.controller.setBrightness(req.data.data)
         if result['success']:
             rospy.loginfo('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
-        return set_brightnessResponse(success=result['success'], message=result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
     def setContrastServiceCb(self, req):
-        result = self.controller.setContrast(req.contrast)
+        result = self.controller.setContrast(req.data.data)
         if result['success']:
             rospy.loginfo('%s:setContrastServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setContrastServiceCb: %s', rospy.get_name(), result['message'])
-        return set_contrastResponse(success=result['success'], message=result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
         
     def setSaturationServiceCb(self, req):
-        result = self.controller.setSaturation(req.saturation)
+        result = self.controller.setSaturation(req.data.data)
         if result['success']:
             rospy.loginfo('%s:setSaturationServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setSaturationServiceCb: %s', rospy.get_name(), result['message'])
-        return set_saturationResponse(success=result['success'], message=result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
     def setDayNightModeServiceCb(self, req):
-        result = self.controller.setDayNightMode(req.day_night_mode)
+        result = self.controller.setDayNightMode(req.data)
         if result['success']:
             rospy.loginfo('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
-        return set_day_night_modeResponse(success=result['success'], message=result['message'])
+        return SetStringResponse(ret=ReturnMessage(success=result['success'], message=result['message']))
 
     def setDayNightShiftLevelServiceCb(self, req):
-        result = self.controller.setDayNightShiftLevel(req.shift_level)
+        result = self.controller.setDayNightShiftLevel(req.data.data)
         if result['success']:
             rospy.loginfo('%s:setDayNightShiftLevelServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setDayNightShiftLevelServiceCb: %s', rospy.get_name(), result['message'])
-        return set_day_night_shift_levelResponse(success=result['success'], message=result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
     def setWhiteBalanceServiceCb(self, req):
-        result = self.controller.setWhiteBalance(req.white_balance)
+        result = self.controller.setWhiteBalance(req.data)
         if result['success']:
             rospy.loginfo('%s:setWhiteBalanceServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setWhiteBalanceServiceCb: %s', rospy.get_name(), result['message'])
-        return set_white_balanceResponse(success=result['success'], message=result['message'])
+        return SetStringResponse(ret=ReturnMessage(success=result['success'], message=result['message']))
 
     def getImageSettingsServiceCb(self, req):
         result = self.controller.getImageSettings()
+        metadata = self.image_settings_metadata
+
+        image_settings_msg = ImageSettings()
+        image_settings_msg.header.stamp = rospy.Time.now()
+        image_settings_msg.is_valid = result['success']
+        image_settings_msg.status_message = result['message']
+
+        image_settings_msg.brightness = result['brightness']
+        image_settings_msg.brightness_min = metadata['brightness_min']
+        image_settings_msg.brightness_max = metadata['brightness_max']
+
+        image_settings_msg.contrast = result['contrast']
+        image_settings_msg.contrast_min = metadata['contrast_min']
+        image_settings_msg.contrast_max = metadata['contrast_max']
+
+        image_settings_msg.saturation = result['saturation']
+        image_settings_msg.saturation_min = metadata['saturation_min']
+        image_settings_msg.saturation_max = metadata['saturation_max']
+
+        image_settings_msg.white_balance = result['white_balance']
+        image_settings_msg.white_balance_available = metadata['white_balance_available']
+
+        image_settings_msg.day_night_available = metadata['day_night_available']
+        image_settings_msg.is_night_mode_active = result['is_night_mode_active']
+        image_settings_msg.day_night_shift_level = result['day_night_shift_level']
+        image_settings_msg.day_night_shift_level_min = metadata['day_night_shift_level_min']
+        image_settings_msg.day_night_shift_level_max = metadata['day_night_shift_level_max']
+
         if result['success']:
             rospy.loginfo('%s:getImageSettingsServiceCb: retrieved image settings', rospy.get_name())
         else:
@@ -331,12 +356,7 @@ class AxisPTZ(threading.Thread):
         return get_image_settingsResponse(
             success=result['success'],
             message=result['message'],
-            brightness=result['brightness'],
-            contrast=result['contrast'],
-            saturation=result['saturation'],
-            white_balance=result['white_balance'],
-            is_night_mode_active=result['is_night_mode_active'],
-            day_night_shift_level=result['day_night_shift_level']
+            image_settings=image_settings_msg
         )
 
         
