@@ -45,7 +45,7 @@ from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
 import diagnostic_updater
 import diagnostic_msgs
-from axis_camera.srv import get_device_info, get_device_infoResponse
+from robotnik_msgs.srv import GetAxisDeviceInfo, GetAxisDeviceInfoResponse
 
 from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.axis_lib.device_info import get_device_info_with_fallback
@@ -147,7 +147,7 @@ class AxisPTZ(threading.Thread):
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.loadDeviceInfo()
-        self.device_info_service = rospy.Service('/get_device_info', get_device_info, self.getDeviceInfoServiceCb)
+        self.device_info_service = rospy.Service('/get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -182,7 +182,7 @@ class AxisPTZ(threading.Thread):
         rospy.set_param('~device/firmware', self.device_firmware)
 
     def getDeviceInfoServiceCb(self, req):
-        return get_device_infoResponse(
+        return GetAxisDeviceInfoResponse(
             model=self.device_model,
             serial=self.device_serial,
             firmware=self.device_firmware

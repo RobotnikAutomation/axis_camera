@@ -42,7 +42,7 @@ import camera_info_manager
 
 import diagnostic_updater
 import diagnostic_msgs
-from axis_camera.srv import get_device_info, get_device_infoResponse
+from robotnik_msgs.srv import GetAxisDeviceInfo, GetAxisDeviceInfoResponse
 from axis_camera.axis_lib.device_info import get_device_info_with_fallback
 from axis_camera.axis_lib.axis_stream import StreamAxis
 
@@ -127,7 +127,7 @@ class Axis():
 
         # Device info
         self.loadDeviceInfo()
-        self.device_info_service = rospy.Service('/get_device_info', get_device_info, self.getDeviceInfoServiceCb)
+        self.device_info_service = rospy.Service('/get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
         rospy.loginfo('%s: device info model=%s serial=%s firmware=%s' %
                       (rospy.get_name(), self.device_model, self.device_serial, self.device_firmware))
 
@@ -209,7 +209,7 @@ class Axis():
         rospy.set_param('~device/firmware', self.device_firmware)
 
     def getDeviceInfoServiceCb(self, req):
-        return get_device_infoResponse(
+        return GetAxisDeviceInfoResponse(
             model=self.device_model,
             serial=self.device_serial,
             firmware=self.device_firmware
