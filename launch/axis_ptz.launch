@@ -29,5 +29,5 @@
 	<param name="initialization_delay" value="$(arg initialization_delay)"/>
 	<param name="send_constantly" value="$(arg send_constantly)"/>
 
-	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)_ptz" output="screen"/>
+	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)_ptz" output="screen" required="true"/>
 </launch>
