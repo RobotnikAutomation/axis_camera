@@ -543,9 +543,9 @@ class ControlAxis():
             if response.status == 200:
                 body = response.read()
                 try:
-                    parsed_params = dict([s.split('=', 2) for s in body.splitlines()])
+                    parsed_params = dict([s.split('=', 1) for s in body.splitlines()])
                 except:
-                    parsed_params = dict([s.decode().split('=', 2) for s in body.splitlines()])
+                    parsed_params = dict([s.decode().split('=', 1) for s in body.splitlines()])
 
                 if 'MinFocus' in parsed_params:
                     ptz_limits['focus_min'] = float(parsed_params['MinFocus'])

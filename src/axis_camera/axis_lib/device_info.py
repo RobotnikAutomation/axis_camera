@@ -1,4 +1,5 @@
 import json
+import base64
 
 try:
     import httplib
@@ -31,10 +32,8 @@ except Exception:
 def _encode_basic_auth(username, password):
     auth_string = '%s:%s' % (username, password)
     try:
-        import base64
         encoded = base64.encodestring(auth_string)[:-1]
     except Exception:
-        import base64
         encoded = base64.encodebytes(auth_string.encode())[:-1]
 
     if not isinstance(encoded, str):

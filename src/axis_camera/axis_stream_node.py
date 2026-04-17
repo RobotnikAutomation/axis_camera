@@ -127,7 +127,7 @@ class Axis():
 
         # Device info
         self.loadDeviceInfo()
-        self.device_info_service = rospy.Service('/get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
+        self.device_info_service = rospy.Service('~get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
         rospy.loginfo('%s: device info model=%s serial=%s firmware=%s' %
                       (rospy.get_name(), self.device_model, self.device_serial, self.device_firmware))
 
