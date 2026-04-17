@@ -259,7 +259,7 @@ class AxisPTZ(threading.Thread):
         self.focus_service = rospy.Service('~set_focus', SetCameraFocus, self.setFocusService)
         self.iris_service = rospy.Service('~set_iris', SetCameraIris, self.setIrisService)
         self.loadDeviceInfo()
-        self.device_info_service = rospy.Service('/get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
+        self.device_info_service = rospy.Service('~get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
