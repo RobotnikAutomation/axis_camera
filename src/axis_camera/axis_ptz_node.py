@@ -47,8 +47,10 @@ from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
 import diagnostic_updater
 import diagnostic_msgs
+from robotnik_msgs.srv import GetAxisDeviceInfo, GetAxisDeviceInfoResponse
 
 from axis_camera.axis_lib.axis_control import ControlAxis
+from axis_camera.axis_lib.device_info import get_device_info_with_fallback
 
 class AxisPTZ(threading.Thread):
     """
@@ -59,6 +61,9 @@ class AxisPTZ(threading.Thread):
         self.hostname = args['hostname']
         self.camera_id = args['camera_id']
         self.camera_model = args['camera_model']
+        self.username = args['username']
+        self.password = args['password']
+        self.enable_auth = args['enable_auth']
         self.rate = args['ptz_rate']
         self.autoflip = args['autoflip']
         self.eflip = args['eflip']
@@ -120,12 +125,17 @@ class AxisPTZ(threading.Thread):
         self.focus_max_value = 9999.0
         self.iris_min_value = 1.0
         self.iris_max_value = 9999.0
+        self.iris_two_step_control = args.get('iris_two_step_control', False)
         
         # Detect effective focus range at runtime
         self.effective_focus_min_raw = None
         self.effective_focus_min_percent = None
         self.last_commanded_focus_percent = None
         self.focus_clipping_warned = False
+        self.timeout = 5
+        self.device_model = 'unknown'
+        self.device_serial = 'unknown'
+        self.device_firmware = 'unknown'
 
         # Timer to get/release ptz control
         if(self.use_control_timeout):
@@ -178,6 +188,17 @@ class AxisPTZ(threading.Thread):
     def _focusPercentageToRaw(self, focus_percentage):
         clamped_percentage = min(max(focus_percentage, 0.0), 100.0)
         return self.focus_min_value + ((self.focus_max_value - self.focus_min_value) * (clamped_percentage / 100.0))
+
+    def _irisRawToPercentage(self, iris_value):
+        if self.iris_max_value <= self.iris_min_value:
+            return 0.0
+
+        clamped_iris = min(max(iris_value, self.iris_min_value), self.iris_max_value)
+        return ((clamped_iris - self.iris_min_value) / (self.iris_max_value - self.iris_min_value)) * 100.0
+
+    def _irisPercentageToRaw(self, iris_percentage):
+        clamped_percentage = min(max(iris_percentage, 0.0), 100.0)
+        return self.iris_min_value + ((self.iris_max_value - self.iris_min_value) * (clamped_percentage / 100.0))
     
     def _updateEffectiveFocusFromCommand(self, commanded_focus_percent, actual_focus_percent, autofocus_enabled):
         """
@@ -226,6 +247,7 @@ class AxisPTZ(threading.Thread):
         """
                 Sets the ros connections
         """
+        ns = rospy.get_namespace()
         self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
         # Publish the joint state of the pan & tilt
@@ -236,6 +258,8 @@ class AxisPTZ(threading.Thread):
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.focus_service = rospy.Service('~set_focus', SetCameraFocus, self.setFocusService)
         self.iris_service = rospy.Service('~set_iris', SetCameraIris, self.setIrisService)
+        self.loadDeviceInfo()
+        self.device_info_service = rospy.Service('/get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
 
         # Diagnostic Updater
         self.diagnostics_updater = diagnostic_updater.Updater()
@@ -247,6 +271,34 @@ class AxisPTZ(threading.Thread):
         self.zoom_augments = []
         for i in range(int(self.min_zoom_augment), int(self.max_zoom_augment) + 1, int(self.min_zoom_step)):
             self.zoom_augments.append(i)
+
+        rospy.loginfo('%s: device info model=%s serial=%s firmware=%s' %
+                      (rospy.get_name(), self.device_model, self.device_serial, self.device_firmware))
+
+    def loadDeviceInfo(self):
+        """Load device info using shared device_info module"""
+        info = get_device_info_with_fallback(
+            self.hostname,
+            timeout=self.timeout,
+            enable_auth=self.enable_auth,
+            username=self.username,
+            password=self.password,
+            logger=rospy.logwarn
+        )
+        self.device_model = info.get('model', 'unknown')
+        self.device_serial = info.get('serial', 'unknown')
+        self.device_firmware = info.get('firmware', 'unknown')
+
+        rospy.set_param('~device/model', self.device_model)
+        rospy.set_param('~device/serial', self.device_serial)
+        rospy.set_param('~device/firmware', self.device_firmware)
+
+    def getDeviceInfoServiceCb(self, req):
+        return GetAxisDeviceInfoResponse(
+            model=self.device_model,
+            serial=self.device_serial,
+            firmware=self.device_firmware
+        )
 
     def commandPTZCb(self, msg):
         """
@@ -503,13 +555,17 @@ class AxisPTZ(threading.Thread):
             rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
             return response
 
-        if not req.auto and (req.value < self.iris_min_value or req.value > self.iris_max_value):
+        if not req.auto and (req.value < 0.0 or req.value > 100.0):
             response.ret = False
-            response.message = 'Iris value must be within [%.1f, %.1f]' % (self.iris_min_value, self.iris_max_value)
+            response.message = 'Iris percentage must be within [0, 100]'
             rospy.logwarn('%s:setIrisService: %s', rospy.get_name(), response.message)
             return response
 
-        iris_value = None if req.auto else req.value
+        iris_value = None if req.auto else self._irisPercentageToRaw(req.value)
+        if not req.auto and self.iris_two_step_control:
+            # Send autoiris=off first; some cameras (e.g. P5676-LE) revert to
+            # auto-iris when the two commands arrive simultaneously.
+            self.controller.sendPTZCommand(autoiris=False)
         control = self.controller.sendPTZCommand(iris=iris_value, autoiris=req.auto)
         if not self._commandSucceeded(control, 'iris'):
             response.ret = False
@@ -518,7 +574,7 @@ class AxisPTZ(threading.Thread):
 
         self.desired_autoiris = req.auto
         if iris_value is not None:
-            self.desired_iris = iris_value
+            self.desired_iris = req.value  # store as percentage
 
         response.ret = True
         response.message = 'Iris command sent'
@@ -570,7 +626,7 @@ class AxisPTZ(threading.Thread):
             self.current_ptz.tilt = self.invert_tilt * (ptz_read["tilt"] - self.tilt_offset)
             
             self.current_ptz.zoom = ptz_read["zoom"]
-            self.current_ptz.iris = ptz_read["iris"]
+            self.current_ptz.iris = self._irisRawToPercentage(ptz_read["iris"])
             self.current_ptz.autoiris = ptz_read["autoiris"]
             self.current_ptz.focus = self._focusRawToPercentage(ptz_read["focus"])
             self.current_ptz.autofocus = ptz_read["autofocus"]
@@ -604,6 +660,7 @@ class AxisPTZ(threading.Thread):
             self.error_reading = ptz_read["error_reading"]
             self.error_reading_msg = ptz_read["error_reading_msg"]
             rospy.logerr('%s:getPTZState: received corrupted data: %s '%(rospy.get_name(),self.error_reading_msg))
+            rospy.signal_shutdown('PTZ read error: %s' % self.error_reading_msg)
             
         #print('Get state')
         #self.axis.pub.publish(self.msg)
@@ -740,6 +797,8 @@ class AxisPTZ(threading.Thread):
         if self.effective_focus_min_percent is not None:
             stat.add("focus_effective_range_percent", "[%.1f, 100.0]" % self.effective_focus_min_percent)
         stat.add("focus_supported", self.focus_supported)
+        stat.add("iris_declared_range_percent", "[0.0, 100.0]")
+        stat.add("iris_supported", self.iris_supported)
         
         return stat
 
@@ -762,7 +821,10 @@ def main():
     # default params
     arg_defaults = {
         'hostname': '192.168.1.205',
-        'camera_id': 'XXXX',  # internal id (if necessary)
+        'username': 'root',
+        'password': 'R0b0tn1K',
+        'enable_auth': True,
+        'camera_id': 'XXXX',# internal id (if necessary)
         'camera_model': 'axis_m5525',
         'autoflip': False,
         'eflip': False,
@@ -788,7 +850,8 @@ def main():
         'invert_tilt': False,
         'send_constantly': False,
         'pan_offset': 0.0,
-        'tilt_offset': 0.0
+        'tilt_offset': 0.0,
+        'iris_two_step_control': False
     }
     args = {}
 

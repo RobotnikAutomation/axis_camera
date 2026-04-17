@@ -44,11 +44,27 @@ In `launch/axis.launch`:
   max_zoom_augment: 30.0
   ```
 
-### Parameters
+#### Published Parameters
+* ~device/model (string)
+  Camera model detected by the driver.
+* ~device/serial (string)
+  Camera serial number detected by the driver.
+* ~device/firmware (string)
+  Camera firmware version detected by the driver.
+
 #### Published Topics
 * ~zoom_parameters (robotnik_msgs/CameraParameters)
   Zoom parameters publisher, containing min_zoom_step, max_zoom_augment, min_zoom_augment and a list of available augments
 * ~camera_params (robotnik_msgs/Axis)
+
+#### Services
+* /get_device_info (robotnik_msgs/GetAxisDeviceInfo)
+  Returns camera device information (model, serial, firmware).
+
+Service call example:
+```
+rosservice call /get_device_info
+```
 
 
 ### Testing your camera
@@ -103,7 +119,7 @@ These services are independent from continuous PTZ command publishing.
     * `auto` (`bool`): if `true`, camera autofocus is enabled and `value` is ignored by the camera
 * `~set_iris` (`robotnik_msgs/SetCameraIris`)
   * request fields:
-    * `value` (`float32`): manual iris value in camera units (between camera-reported min and max)
+    * `value` (`float32`): manual iris value in percentage (`0.0` to `100.0`)
     * `auto` (`bool`): if `true`, camera autoiris is enabled and `value` is ignored by the camera
 
 Examples:
@@ -126,13 +142,14 @@ rosservice call /axis_camera_ptz/set_iris "value: 0.0
 auto: true"
 ```
 
-Set manual iris:
+Set manual iris to 75%:
 ```
-rosservice call /axis_camera_ptz/set_iris "value: 500.0
+rosservice call /axis_camera_ptz/set_iris "value: 75.0
 auto: false"
 ```
 
 Notes:
 
 * Service names depend on node namespace. Run `rosservice list` to get exact names in your setup.
-* Current `focus`, `autofocus`, `iris` and `autoiris` values are published in `~camera_params` (`robotnik_msgs/Axis`).
+* Current `focus`, `autofocus`, `iris` and `autoiris` values are published in `~camera_params` (`robotnik_msgs/Axis`). Focus and iris values are in percentage (0–100).
+* On some camera models (e.g. Axis P5676-LE) manual iris control may not hold reliably due to firmware behaviour. Set `iris_two_step_control:=true` in the launch parameters to send `autoiris=off` as a separate command before each iris set, which can help prevent automatic reversion on affected models.
