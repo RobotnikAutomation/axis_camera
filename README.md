@@ -44,11 +44,27 @@ In `launch/axis.launch`:
   max_zoom_augment: 30.0
   ```
 
-### Parameters
+#### Published Parameters
+* ~device/model (string)
+  Camera model detected by the driver.
+* ~device/serial (string)
+  Camera serial number detected by the driver.
+* ~device/firmware (string)
+  Camera firmware version detected by the driver.
+
 #### Published Topics
 * ~zoom_parameters (robotnik_msgs/CameraParameters)
   Zoom parameters publisher, containing min_zoom_step, max_zoom_augment, min_zoom_augment and a list of available augments
 * ~camera_params (robotnik_msgs/Axis)
+
+#### Services
+* /get_device_info (robotnik_msgs/GetAxisDeviceInfo)
+  Returns camera device information (model, serial, firmware).
+
+Service call example:
+```
+rosservice call /get_device_info
+```
 
 
 ### Testing your camera

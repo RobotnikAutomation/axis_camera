@@ -19,9 +19,9 @@
 
 	<rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
 	<param name="hostname" value="$(arg ip_address)"/>
--	<param name="username" value="$(arg username)" />
--	<param name="password" value="$(arg password)" />
--	<param name="camera_model" value="$(arg camera_model)"/>
+	<param name="username" value="$(arg username)" />
+	<param name="password" value="$(arg password)" />
+	<param name="camera_model" value="$(arg camera_model)"/>
 	<param name="enable_auth" value="$(arg enable_auth)"/>
 	<param name="pan_joint" value="$(arg pan_joint)"/>
 	<param name="tilt_joint" value="$(arg tilt_joint)"/>
@@ -29,5 +29,5 @@
 	<param name="initialization_delay" value="$(arg initialization_delay)"/>
 	<param name="send_constantly" value="$(arg send_constantly)"/>
 
-	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)_ptz" output="screen"/>
+	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)_ptz" output="screen" required="true"/>
 </launch>
