@@ -44,8 +44,7 @@ In `launch/axis.launch`:
   max_zoom_augment: 30.0
   ```
 
-### Parameters
-#### Private Parameters
+#### Published Parameters
 * ~device/model (string)
   Camera model detected by the driver.
 * ~device/serial (string)
