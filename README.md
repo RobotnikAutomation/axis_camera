@@ -122,7 +122,7 @@ roslaunch axis_camera axis_ptz.launch ip_address:=<camera_ip>
 
 ### Published Topics
 
-* `~camera_params` (`robotnik_msgs/Axis`) — Current PTZ state. `focus` and `iris` fields are published as **percentage (0–100)**.
+* `~camera_params` (`robotnik_msgs/Axis`) — Current PTZ state. `focus` and `iris` fields are published as percentage (0–100).
 * `~camera_parameters` (`robotnik_msgs/CameraParameters`) — Zoom range and step configuration.
 * `~joint_states` (`sensor_msgs/JointState`) — Pan, tilt and zoom as joint positions.
 
@@ -138,7 +138,7 @@ Moves the camera to the home position (pan=0, tilt=0, zoom=0).
 rosservice call /axis_camera_ptz/home_ptz
 ```
 
-#### `/get_device_info` (`robotnik_msgs/GetAxisDeviceInfo`)
+#### `~get_device_info` (`robotnik_msgs/GetAxisDeviceInfo`)
 Returns camera device information (model, serial number, firmware version).
 ```
 rosservice call /get_device_info
