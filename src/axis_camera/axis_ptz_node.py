@@ -40,17 +40,23 @@ import rospy
 from std_srvs.srv import Empty
 from sensor_msgs.msg import JointState
 
-from robotnik_msgs.srv import SetCameraFocus, SetCameraFocusResponse
-from robotnik_msgs.srv import SetCameraIris, SetCameraIrisResponse
 from robotnik_msgs.msg import Axis as AxisMsg
 from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
+from robotnik_msgs.msg import ImageSettings
+from robotnik_msgs.msg import ReturnMessage
+from robotnik_msgs.srv import SetCameraFocus, SetCameraFocusResponse
+from robotnik_msgs.srv import SetCameraIris, SetCameraIrisResponse
+from robotnik_msgs.srv import GetAxisDeviceInfo, GetAxisDeviceInfoResponse
 import diagnostic_updater
 import diagnostic_msgs
-from robotnik_msgs.srv import GetAxisDeviceInfo, GetAxisDeviceInfoResponse
 
 from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.axis_lib.device_info import get_device_info_with_fallback
+from robotnik_msgs.srv import SetInt16, SetInt16Response
+from robotnik_msgs.srv import SetString, SetStringResponse
+from robotnik_msgs.srv import GetStringList, GetStringListResponse
+from robotnik_msgs.srv import GetImageSettings, GetImageSettingsResponse
 
 class AxisPTZ(threading.Thread):
     """
@@ -126,7 +132,7 @@ class AxisPTZ(threading.Thread):
         self.iris_min_value = 1.0
         self.iris_max_value = 9999.0
         self.iris_two_step_control = args.get('iris_two_step_control', False)
-        
+
         # Detect effective focus range at runtime
         self.effective_focus_min_raw = None
         self.effective_focus_min_percent = None
@@ -142,7 +148,7 @@ class AxisPTZ(threading.Thread):
             self.last_command_time = rospy.Time(0)
             self.command_timeout = rospy.Duration(self.control_timeout_value)
         
-        self.controller = ControlAxis(self.hostname)
+        self.controller = ControlAxis(self.hostname, args.get('username', 'root'), args.get('password', ''))
         # Time to set when the last command was received
         self.t_last_command_time = rospy.Time(0)
         # Time to control when the last command was received
@@ -153,6 +159,14 @@ class AxisPTZ(threading.Thread):
         self.control_mode = 'position'
         self.t_last_command_sent = rospy.Time(0)
         self.t_control_loop = 1 / self.rate
+        self.image_settings_pub_rate = args['image_settings_pub_rate']
+        if self.image_settings_pub_rate <= 0.0:
+            self.image_settings_pub_rate = 1.0
+        self.image_settings_pub_period = rospy.Duration(1.0 / self.image_settings_pub_rate)
+        self.t_last_image_settings_pub = rospy.Time(0)
+        self.image_settings_metadata = self.controller.getImageSettingsMetadata()
+        self.image_settings_error_active = False
+        self.last_image_settings_error_message = ''
 
         self._readPTZLimitsFromCamera()
 
@@ -254,10 +268,20 @@ class AxisPTZ(threading.Thread):
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
         # Publish camera zoom info
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
+        # Publish image settings state (base + explicit current alias)
+        self.image_settings_pub = rospy.Publisher("~image_settings", ImageSettings, queue_size=10)
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.focus_service = rospy.Service('~set_focus', SetCameraFocus, self.setFocusService)
         self.iris_service = rospy.Service('~set_iris', SetCameraIris, self.setIrisService)
+        self.set_brightness_service = rospy.Service('~set_brightness', SetInt16, self.setBrightnessServiceCb)
+        self.set_contrast_service = rospy.Service('~set_contrast', SetInt16, self.setContrastServiceCb)
+        self.set_saturation_service = rospy.Service('~set_saturation', SetInt16, self.setSaturationServiceCb)
+        self.set_day_night_mode_service = rospy.Service('~set_day_night_mode', SetString, self.setDayNightModeServiceCb)
+        self.set_day_night_shift_level_service = rospy.Service('~set_day_night_shift_level', SetInt16, self.setDayNightShiftLevelServiceCb)
+        self.set_white_balance_service = rospy.Service('~set_white_balance', SetString, self.setWhiteBalanceServiceCb)
+        self.get_white_balance_mode_service = rospy.Service('~get_white_balance_mode', GetStringList, self.getWhiteBalanceModeServiceCb)
+        self.get_image_settings_service = rospy.Service('~get_image_settings', GetImageSettings, self.getImageSettingsServiceCb)
         self.loadDeviceInfo()
         self.device_info_service = rospy.Service('~get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
 
@@ -397,90 +421,106 @@ class AxisPTZ(threading.Thread):
             rospy.logwarn('%s:homeService: PTZ not syncronized!', rospy.get_name())
             
         return {}
-        
-        
-    def controlPTZ(self):
-        """
-            Performs the control of the camera ptz
-        """
-        t_now = rospy.Time.now()
 
-        if self.control_mode == 'position':
-            # Only if it's syncronized
-            if self.ptz_syncronized:
-                if self.send_constantly == True:
-                    self.sendPTZCommand()
-        
-        elif self.control_mode == 'velocity':# Nothing for now
-            '''if (t_now - self.t_last_command_sent) > self.t_control_loop:
-                rospy.loginfo('controlPTZ: sending velocity command')
-            ''' 
-            # Only if it's syncronized
-            if self.ptz_syncronized:
-                if self.send_constantly == True:
-                    self.sendPTZCommand()
-
-        if (t_now - self.t_last_command_time) > self.t_last_command_watchdog:
-            #rospy.loginfo_throttle(5, 'controlPTZ: watchdog timeout')
-            # syncronize desired position to the current one every time the control is idle
-            self.desired_pan = self.invert_pan*self.current_ptz.pan 
-            self.desired_tilt = self.invert_tilt*self.current_ptz.tilt
-            self.desired_zoom = self.current_ptz.zoom
-            self.desired_focus = self.current_ptz.focus
-            self.desired_autofocus = self.current_ptz.autofocus
-            self.desired_iris = self.current_ptz.iris
-            self.desired_autoiris = self.current_ptz.autoiris
-
-        
-
-    def isPTZinPosition(self):	
-        """
-            @return True if camera has the desired position / settings
-        """
-        if abs(self.current_ptz.pan - self.desired_pan) <= self.error_pos and abs(self.current_ptz.tilt - self.desired_tilt) <= self.error_pos and abs(self.current_ptz.zoom - self.desired_zoom) <= self.error_zoom:
-            '''rospy.logwarn('isPTZinPosition: pan %.3lf vs %.3lf', self.current_ptz.pan, self.desired_pan)
-            rospy.logwarn('isPTZinPosition: tilt %.3lf vs %.3lf', self.current_ptz.tilt, self.desired_tilt)
-            rospy.logwarn('isPTZinPosition: zoom %.3lf vs %.3lf', self.current_ptz.zoom, self.desired_zoom)'''
-            return True
+    def setBrightnessServiceCb(self, req):
+        result = self.controller.setBrightness(req.data.data)
+        if result['success']:
+            rospy.loginfo('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
         else:
-            return False
+            rospy.logerr('%s:setBrightnessServiceCb: %s', rospy.get_name(), result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
-    def sendPTZCommand(self, pan = None, tilt = None, zoom = None):
-        """
-            Sends the ptz to the camera
-        """
+    def setContrastServiceCb(self, req):
+        result = self.controller.setContrast(req.data.data)
+        if result['success']:
+            rospy.loginfo('%s:setContrastServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setContrastServiceCb: %s', rospy.get_name(), result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
-        # Add offsets to the pan and tilt values
-        if pan is None:
-            pan_value = self.desired_pan + self.pan_offset
-        else:
-            pan_value = pan + self.pan_offset
         
-        if tilt is None:
-            tilt_value = self.desired_tilt + self.tilt_offset
+    def setSaturationServiceCb(self, req):
+        result = self.controller.setSaturation(req.data.data)
+        if result['success']:
+            rospy.loginfo('%s:setSaturationServiceCb: %s', rospy.get_name(), result['message'])
         else:
-            tilt_value = tilt + self.tilt_offset
-        
-        if zoom is None:
-            zoom_value = self.desired_zoom
-        else:
-            zoom_value = zoom
-        
-        #rospy.loginfo('sendPTZCommand: desired_pan = %.3lf, pan_offset = %.3lf, pan = %.3lf', self.desired_pan, self.pan_offset, pan)
-        #rospy.loginfo('sendPTZCommand: desired_tilt = %.3lf, tilt_offset = %.3lf, tilt = %.3lf',self.desired_tilt, self.tilt_offset, tilt)
+            rospy.logerr('%s:setSaturationServiceCb: %s', rospy.get_name(), result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
 
-        pan_value = math.degrees(pan_value)
-        tilt_value = math.degrees(tilt_value)
-        zoom_value = self.desired_zoom
-        
-        control = self.controller.sendPTZCommand(pan_value, tilt_value, zoom_value)
-        
-        if control['status'] != 204 and not control['exception']:
-            rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, control['url']) )
-        elif control['exception']:
-            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(), control['error_msg']))
-        
-        self.t_last_command_sent = rospy.Time.now()
+    def setDayNightModeServiceCb(self, req):
+        result = self.controller.setDayNightMode(req.data)
+        if result['success']:
+            rospy.loginfo('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
+        return SetStringResponse(ret=ReturnMessage(success=result['success'], message=result['message']))
+
+    def setDayNightShiftLevelServiceCb(self, req):
+        result = self.controller.setDayNightShiftLevel(req.data.data)
+        if result['success']:
+            rospy.loginfo('%s:setDayNightShiftLevelServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setDayNightShiftLevelServiceCb: %s', rospy.get_name(), result['message'])
+        return SetInt16Response(ret=ReturnMessage(success=result['success'], message=result['message']))
+
+    def setWhiteBalanceServiceCb(self, req):
+        result = self.controller.setWhiteBalance(req.data)
+        if result['success']:
+            rospy.loginfo('%s:setWhiteBalanceServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setWhiteBalanceServiceCb: %s', rospy.get_name(), result['message'])
+        return SetStringResponse(ret=ReturnMessage(success=result['success'], message=result['message']))
+
+    def getWhiteBalanceModeServiceCb(self, req):
+        result = self.controller.getWhiteBalanceModes()
+        if result['success']:
+            rospy.loginfo('%s:getWhiteBalanceModeServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:getWhiteBalanceModeServiceCb: %s', rospy.get_name(), result['message'])
+        return GetStringListResponse(
+            strings=result['modes'],
+            ret=ReturnMessage(success=result['success'], message=result['message'])
+        )
+
+    def getImageSettingsServiceCb(self, req):
+        result = self.controller.getImageSettings()
+        metadata = self.image_settings_metadata
+
+        image_settings_msg = ImageSettings()
+        image_settings_msg.header.stamp = rospy.Time.now()
+        image_settings_msg.is_valid = result['success']
+        image_settings_msg.status_message = result['message']
+
+        image_settings_msg.brightness = result['brightness']
+        image_settings_msg.brightness_min = metadata['brightness_min']
+        image_settings_msg.brightness_max = metadata['brightness_max']
+
+        image_settings_msg.contrast = result['contrast']
+        image_settings_msg.contrast_min = metadata['contrast_min']
+        image_settings_msg.contrast_max = metadata['contrast_max']
+
+        image_settings_msg.saturation = result['saturation']
+        image_settings_msg.saturation_min = metadata['saturation_min']
+        image_settings_msg.saturation_max = metadata['saturation_max']
+
+        image_settings_msg.white_balance = result['white_balance']
+        image_settings_msg.white_balance_available = metadata['white_balance_available']
+
+        image_settings_msg.day_night_available = metadata['day_night_available']
+        image_settings_msg.is_night_mode_active = result['is_night_mode_active']
+        image_settings_msg.day_night_shift_level = result['day_night_shift_level']
+        image_settings_msg.day_night_shift_level_min = metadata['day_night_shift_level_min']
+        image_settings_msg.day_night_shift_level_max = metadata['day_night_shift_level_max']
+
+        if result['success']:
+            rospy.loginfo('%s:getImageSettingsServiceCb: retrieved image settings', rospy.get_name())
+        else:
+            rospy.logerr('%s:getImageSettingsServiceCb: %s', rospy.get_name(), result['message'])
+        return GetImageSettingsResponse(
+            success=result['success'],
+            message=result['message'],
+            image_settings=image_settings_msg
+        )
 
     def setFocusService(self, req):
         response = SetCameraFocusResponse()
@@ -611,6 +651,89 @@ class AxisPTZ(threading.Thread):
         if not self.iris_supported and not self.iris_support_warned:
             rospy.logwarn('%s:getPTZState: camera does not report iris/autoiris support', rospy.get_name())
             self.iris_support_warned = True
+
+    def controlPTZ(self):
+        """
+            Performs the control of the camera ptz
+        """
+        t_now = rospy.Time.now()
+
+        if self.control_mode == 'position':
+            # Only if it's syncronized
+            if self.ptz_syncronized:
+                if self.send_constantly == True:
+                    self.sendPTZCommand()
+        
+        elif self.control_mode == 'velocity':# Nothing for now
+            '''if (t_now - self.t_last_command_sent) > self.t_control_loop:
+                rospy.loginfo('controlPTZ: sending velocity command')
+            ''' 
+            # Only if it's syncronized
+            if self.ptz_syncronized:
+                if self.send_constantly == True:
+                    self.sendPTZCommand()
+
+        if (t_now - self.t_last_command_time) > self.t_last_command_watchdog:
+            #rospy.loginfo_throttle(5, 'controlPTZ: watchdog timeout')
+            # syncronize desired position to the current one every time the control is idle
+            self.desired_pan = self.invert_pan*self.current_ptz.pan 
+            self.desired_tilt = self.invert_tilt*self.current_ptz.tilt
+            self.desired_zoom = self.current_ptz.zoom
+            self.desired_focus = self.current_ptz.focus
+            self.desired_autofocus = self.current_ptz.autofocus
+            self.desired_iris = self.current_ptz.iris
+            self.desired_autoiris = self.current_ptz.autoiris
+
+        
+
+    def isPTZinPosition(self):	
+        """
+            @return True if camera has the desired position / settings
+        """
+        if abs(self.current_ptz.pan - self.desired_pan) <= self.error_pos and abs(self.current_ptz.tilt - self.desired_tilt) <= self.error_pos and abs(self.current_ptz.zoom - self.desired_zoom) <= self.error_zoom:
+            '''rospy.logwarn('isPTZinPosition: pan %.3lf vs %.3lf', self.current_ptz.pan, self.desired_pan)
+            rospy.logwarn('isPTZinPosition: tilt %.3lf vs %.3lf', self.current_ptz.tilt, self.desired_tilt)
+            rospy.logwarn('isPTZinPosition: zoom %.3lf vs %.3lf', self.current_ptz.zoom, self.desired_zoom)'''
+            return True
+        else:
+            return False
+
+    def sendPTZCommand(self, pan = None, tilt = None, zoom = None):
+        """
+            Sends the ptz to the camera
+        """
+
+        # Add offsets to the pan and tilt values
+        if pan is None:
+            pan_value = self.desired_pan + self.pan_offset
+        else:
+            pan_value = pan + self.pan_offset
+        
+        if tilt is None:
+            tilt_value = self.desired_tilt + self.tilt_offset
+        else:
+            tilt_value = tilt + self.tilt_offset
+        
+        if zoom is None:
+            zoom_value = self.desired_zoom
+        else:
+            zoom_value = zoom
+        
+        #rospy.loginfo('sendPTZCommand: desired_pan = %.3lf, pan_offset = %.3lf, pan = %.3lf', self.desired_pan, self.pan_offset, pan)
+        #rospy.loginfo('sendPTZCommand: desired_tilt = %.3lf, tilt_offset = %.3lf, tilt = %.3lf',self.desired_tilt, self.tilt_offset, tilt)
+
+        pan_value = math.degrees(pan_value)
+        tilt_value = math.degrees(tilt_value)
+        zoom_value = self.desired_zoom
+        
+        control = self.controller.sendPTZCommand(pan=pan_value, tilt=tilt_value, zoom=zoom_value)
+        
+        if control['status'] != 204 and not control['exception']:
+            rospy.logerr('%s/sendPTZCommand: Error getting response. url = %s%s'% (rospy.get_name(), self.hostname, control['url']) )
+        elif control['exception']:
+            rospy.logerr('%s:sendPTZCommand: error connecting the camera: %s '%(rospy.get_name(), control['error_msg']))
+        
+        self.t_last_command_sent = rospy.Time.now()
             
     def getPTZState(self):
         """
@@ -729,6 +852,56 @@ class AxisPTZ(threading.Thread):
         msg.effort = [0.0, 0.0, 0.0]
         
         self.joint_state_publisher.publish(msg)
+
+        now = rospy.Time.now()
+        if (now - self.t_last_image_settings_pub) >= self.image_settings_pub_period:
+            self.publishImageSettings(now)
+            self.t_last_image_settings_pub = now
+
+    def publishImageSettings(self, now):
+        result = self.controller.getImageSettings()
+        metadata = self.image_settings_metadata
+
+        msg = ImageSettings()
+        msg.header.stamp = now
+        msg.is_valid = result['success']
+        msg.status_message = result['message']
+
+        msg.brightness = result['brightness']
+        msg.brightness_min = metadata['brightness_min']
+        msg.brightness_max = metadata['brightness_max']
+
+        msg.contrast = result['contrast']
+        msg.contrast_min = metadata['contrast_min']
+        msg.contrast_max = metadata['contrast_max']
+
+        msg.saturation = result['saturation']
+        msg.saturation_min = metadata['saturation_min']
+        msg.saturation_max = metadata['saturation_max']
+
+        msg.white_balance = result['white_balance']
+        msg.white_balance_available = metadata['white_balance_available']
+
+        msg.day_night_available = metadata['day_night_available']
+        msg.is_night_mode_active = result['is_night_mode_active']
+        msg.day_night_shift_level = result['day_night_shift_level']
+        msg.day_night_shift_level_min = metadata['day_night_shift_level_min']
+        msg.day_night_shift_level_max = metadata['day_night_shift_level_max']
+
+        if not result['success']:
+            is_new_error = (not self.image_settings_error_active) or (
+                self.last_image_settings_error_message != result['message']
+            )
+            if is_new_error:
+                rospy.logerr('%s:publishImageSettings: %s', rospy.get_name(), result['message'])
+            self.image_settings_error_active = True
+            self.last_image_settings_error_message = result['message']
+        elif self.image_settings_error_active:
+            rospy.loginfo('%s:publishImageSettings: image settings read recovered', rospy.get_name())
+            self.image_settings_error_active = False
+            self.last_image_settings_error_message = ''
+
+        self.image_settings_pub.publish(msg)
         
         
     def get_data(self):
@@ -824,7 +997,7 @@ def main():
         'username': 'root',
         'password': 'R0b0tn1K',
         'enable_auth': True,
-        'camera_id': 'XXXX',# internal id (if necessary)
+        'camera_id': 'XXXX',  # internal id (if necessary)
         'camera_model': 'axis_m5525',
         'autoflip': False,
         'eflip': False,
@@ -851,6 +1024,7 @@ def main():
         'send_constantly': False,
         'pan_offset': 0.0,
         'tilt_offset': 0.0,
+        'image_settings_pub_rate': 1.0,
         'iris_two_step_control': False
     }
     args = {}

@@ -113,6 +113,7 @@ roslaunch axis_camera axis_ptz.launch ip_address:=<camera_ip>
 | `use_control_timeout` | bool | `false` | Release PTZ control after `control_timeout_value` seconds of inactivity |
 | `control_timeout_value` | float | `5.0` | Inactivity timeout in seconds (only used when `use_control_timeout` is true) |
 | `iris_two_step_control` | bool | `false` | Send `autoiris=off` as a separate request before each manual iris command. Helps prevent automatic reversion on some camera models (e.g. Axis P5676-LE). |
+| `image_settings_pub_rate` | float | `1.0` | Rate (Hz) at which `~image_settings` is published. Values ≤ 0 are treated as 1.0. |
 
 ### Published Parameters
 
@@ -125,6 +126,7 @@ roslaunch axis_camera axis_ptz.launch ip_address:=<camera_ip>
 * `~camera_params` (`robotnik_msgs/Axis`) — Current PTZ state. `focus` and `iris` fields are published as percentage (0–100).
 * `~camera_parameters` (`robotnik_msgs/CameraParameters`) — Zoom range and step configuration.
 * `~joint_states` (`sensor_msgs/JointState`) — Pan, tilt and zoom as joint positions.
+* `~image_settings` (`robotnik_msgs/ImageSettings`) — Current image settings published at `image_settings_pub_rate`. The `is_valid` field indicates whether all fields were successfully read from the camera. On cameras with limited VAPIX read support, last-known values may be used as a fallback (see [Image settings behaviour](#image-settings-behaviour)).
 
 ### Subscribed Topics
 
@@ -182,6 +184,58 @@ auto: false"
 
 > **Note on service names**: service names depend on the node namespace. Run `rosservice list` to get the exact names in your setup.
 
+### Image settings services
+
+#### `~set_brightness` (`robotnik_msgs/SetInt16`)
+Sets camera brightness. Accepted range is read from the camera at startup (typical: −100 to 100).
+```bash
+rosservice call /axis_camera_ptz/set_brightness "data: {data: 20}"
+```
+
+#### `~set_contrast` (`robotnik_msgs/SetInt16`)
+Sets camera contrast. Accepted range is read from the camera at startup (typical: −100 to 100).
+```bash
+rosservice call /axis_camera_ptz/set_contrast "data: {data: 20}"
+```
+
+#### `~set_saturation` (`robotnik_msgs/SetInt16`)
+Sets camera saturation. The VAPIX parameter name (`Saturation` or `ColorLevel`) is auto-detected at startup. Accepted range is read from the camera (typical: −100 to 100 for `Saturation`, 0 to 100 for `ColorLevel`).
+```bash
+rosservice call /axis_camera_ptz/set_saturation "data: {data: 30}"
+```
+
+#### `~set_white_balance` (`robotnik_msgs/SetString`)
+Sets the white balance mode. Common values: `auto`, `fixed_indoor`, `fixed_outdoor`, `hold`. Use `~get_white_balance_mode` to list modes supported by the connected camera.
+```bash
+rosservice call /axis_camera_ptz/set_white_balance "data: 'auto'"
+```
+
+#### `~get_white_balance_mode` (`robotnik_msgs/GetStringList`)
+Returns the list of white balance modes supported by the connected camera.
+```bash
+rosservice call /axis_camera_ptz/get_white_balance_mode
+```
+
+#### `~set_day_night_mode` (`robotnik_msgs/SetString`)
+Sets the day/night IR-cut-filter mode. Accepted values: `day`, `night`, `auto`. The VAPIX parameter path (`DayNightShift` or `IrCutFilter`) is auto-detected at startup.
+```bash
+rosservice call /axis_camera_ptz/set_day_night_mode "data: 'day'"
+rosservice call /axis_camera_ptz/set_day_night_mode "data: 'night'"
+rosservice call /axis_camera_ptz/set_day_night_mode "data: 'auto'"
+```
+
+#### `~set_day_night_shift_level` (`robotnik_msgs/SetInt16`)
+Sets the day/night shift threshold level. Accepted range is read from the camera at startup.
+```bash
+rosservice call /axis_camera_ptz/set_day_night_shift_level "data: {data: 50}"
+```
+
+#### `~get_image_settings` (`robotnik_msgs/GetImageSettings`)
+Reads all image settings directly from the camera and returns them as a `robotnik_msgs/ImageSettings` message. Also includes valid ranges for each field.
+```bash
+rosservice call /axis_camera_ptz/get_image_settings
+```
+
 ### Controlling pan, tilt and zoom
 
 Send PTZ commands via the `~ptz_command` topic:
@@ -203,3 +257,12 @@ relative: false"
 * Focus and iris values in `~camera_params` are always in **percentage (0–100)**.
 * If the camera does not report focus or iris support, a warning is logged and the respective service returns an error without crashing the node.
 * On some camera models (e.g. Axis P5676-LE) manual iris control may not hold reliably due to firmware behaviour. Enable `iris_two_step_control` to mitigate this.
+
+### Image settings behaviour
+
+* Brightness, contrast, saturation, white balance and day/night settings are controlled via VAPIX `param.cgi` with HTTP digest authentication.
+* Valid ranges for each parameter are read from the camera at startup using VAPIX `listdefinitions`. Fallback ranges are used when metadata is unavailable.
+* The VAPIX parameter name for saturation (`Saturation` vs `ColorLevel`) and for day/night mode (`DayNightShift` vs `IrCutFilter`) are **auto-detected** at startup to support different firmware versions.
+* After each write operation, the node reads the value back and rolls back if the camera applied an unexpected value (e.g. due to firmware clamping).
+* The `~image_settings` topic is published at `image_settings_pub_rate` Hz. If a read cycle fails, last-known values are re-published and `is_valid` is set to `false`. The `status_message` field explains the fallback reason.
+* On cameras with limited VAPIX read support (e.g. Axis P5676-LE), some fields may not be reliably readable. The node continues publishing and remains operational; only `is_valid` reflects the degraded state.
