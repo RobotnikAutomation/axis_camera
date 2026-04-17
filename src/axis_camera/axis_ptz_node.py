@@ -400,6 +400,7 @@ class AxisPTZ(threading.Thread):
             self.error_reading = ptz_read["error_reading"]
             self.error_reading_msg = ptz_read["error_reading_msg"]
             rospy.logerr('%s:getPTZState: received corrupted data: %s '%(rospy.get_name(),self.error_reading_msg))
+            rospy.signal_shutdown('PTZ read error: %s' % self.error_reading_msg)
             
         #print('Get state')
         #self.axis.pub.publish(self.msg)
