@@ -619,6 +619,39 @@ class ControlAxis():
             conn.close()
         return ret
 
+    def setAutoTracking(self, enable):
+        """
+        Enables or disables auto-tracking via VAPIX.
+        Returns a dict with keys: success (bool), message (str).
+        HTTP 204 => success; HTTP 400 => not supported by this model.
+        """
+        ret = {'success': False, 'message': ''}
+        conn = httplib.HTTPConnection(self.hostname)
+        value = 'on' if enable else 'off'
+        url = '/axis-cgi/com/ptz.cgi?autotrack=%s&camera=1' % value
+        try:
+            conn.request("GET", url)
+            response = conn.getresponse()
+            response.read()  # drain body
+            if response.status == 204:
+                ret['success'] = True
+                ret['message'] = 'Auto-tracking %s' % ('enabled' if enable else 'disabled')
+            elif response.status == 400:
+                ret['success'] = False
+                ret['message'] = 'Auto-tracking not supported by this camera model (HTTP 400)'
+            else:
+                ret['success'] = False
+                ret['message'] = 'Unexpected HTTP status %d while setting auto-tracking' % response.status
+        except socket.error as e:
+            ret['success'] = False
+            ret['message'] = 'Connection error: %s' % str(e)
+        except socket.timeout as e:
+            ret['success'] = False
+            ret['message'] = 'Connection timeout: %s' % str(e)
+        finally:
+            conn.close()
+        return ret
+
     def getPTZState(self):
         """
             Gets the current ptz state/position of the camera
