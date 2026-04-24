@@ -274,6 +274,15 @@ relative: false"
 * `zoom` as float (proportional value between `min_zoom_augment` and `max_zoom_augment`)
 * `relative` as bool — if `true`, values are added to the current position
 
+### Auto-tracking behaviour
+
+* Auto-tracking is controlled via two endpoints tried in order:
+  1. **VAPIX PTZ Autotracking API** (`/axis-cgi/ptz-autotracking/operator.cgi`) — official endpoint available on cameras with firmware ≥ 10.x.
+  2. **PTZ Autotracker ACAP app** (`/local/axis-ptz-autotracking/settings.fcgi`) — the app's own REST API, used by the camera web UI. Available on any camera with the PTZ Autotracker ACAP app installed.
+* If neither endpoint responds, `success=false` is returned with a descriptive message (e.g. app not installed).
+* While auto-tracking is active, the node suppresses all outgoing PTZ commands (both topic-based commands and the continuous control loop).
+* The node polls the camera every 2 seconds to detect state changes made outside ROS (e.g. via the camera web UI or VMS). The `~autotracking_active` topic is updated automatically if a change is detected.
+
 ### Focus and iris behaviour
 
 * Focus and iris limits are **read from the camera at startup** and used to map between raw camera units and percentage.
