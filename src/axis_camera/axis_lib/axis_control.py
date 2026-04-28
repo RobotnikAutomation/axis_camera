@@ -620,6 +620,42 @@ class ControlAxis():
             conn.close()
         return ret
 
+    def _try_autotracking_admin(self, opener, enable):
+        """
+        Tries to set autotracking via VAPIX PTZ Autotracking admin API.
+        Returns (success, message) tuple. success=None means 404 => try fallback.
+        """
+        url = 'http://%s/axis-cgi/ptz-autotracking/admin.cgi' % self.hostname
+        payload = {
+            'apiVersion': '1.0',
+            'method': 'setAutotrackingState',
+            'params': {'enabled': bool(enable)}
+        }
+        try:
+            request = urllib_request.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'}
+            )
+            response = opener.open(request, timeout=5)
+            body = response.read().decode('utf-8', errors='replace').strip()
+            if response.getcode() in (200, 204):
+                if body:
+                    try:
+                        body_json = json.loads(body)
+                    except Exception:
+                        body_json = None
+                    if isinstance(body_json, dict) and isinstance(body_json.get('error'), dict):
+                        return False, 'VAPIX admin.cgi error: %s' % str(body_json['error'].get('code'))
+                return True, 'Auto-tracking %s via VAPIX admin.cgi' % ('enabled' if enable else 'disabled')
+            return False, 'VAPIX admin.cgi HTTP %d' % response.getcode()
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'VAPIX admin.cgi not found (404)'
+            return False, 'VAPIX admin.cgi HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return False, 'VAPIX admin.cgi connection error: %s' % str(e)
+
     def _try_autotracking_vapix(self, opener, enable):
         """
         Tries to set autotracking via official VAPIX PTZ Autotracking API.
@@ -699,10 +735,12 @@ class ControlAxis():
         """
         Enables or disables auto-tracking on Axis PTZ cameras.
 
-        Uses a two-tier approach to support a wide range of camera models:
-          1. VAPIX PTZ Autotracking API (/axis-cgi/ptz-autotracking/operator.cgi)
-             - Official Axis API, available on cameras with firmware >= 10.x
-          2. PTZ Autotracker ACAP app local API (/local/axis-ptz-autotracking/settings.fcgi)
+          Uses a three-tier approach to support a wide range of camera models:
+             1. VAPIX PTZ Autotracking admin API (/axis-cgi/ptz-autotracking/admin.cgi)
+                 - Newer firmware endpoint.
+             2. VAPIX PTZ Autotracking operator API (/axis-cgi/ptz-autotracking/operator.cgi)
+                 - Older firmware endpoint.
+             3. PTZ Autotracker ACAP app local API (/local/axis-ptz-autotracking/settings.fcgi)
              - The app's own REST endpoint, used by the web UI, available on any
                camera with the PTZ Autotracker ACAP app installed (e.g. P5676-LE)
 
@@ -711,7 +749,17 @@ class ControlAxis():
         ret = {'success': False, 'message': ''}
         opener = self._get_digest_opener()
 
-        # 1. Try official VAPIX endpoint first
+        # 1. Try VAPIX admin endpoint first
+        success, message = self._try_autotracking_admin(opener, enable)
+        if success is True:
+            ret['success'] = True
+            ret['message'] = message
+            return ret
+        if success is False:
+            ret['message'] = message
+            return ret
+
+        # 2. Try legacy VAPIX operator endpoint
         success, message = self._try_autotracking_vapix(opener, enable)
         if success is True:
             ret['success'] = True
@@ -722,7 +770,7 @@ class ControlAxis():
             return ret
 
         # success is None => 404, fall through to ACAP app endpoint
-        # 2. Fall back to ACAP app local endpoint
+        # 3. Fall back to ACAP app local endpoint
         success, message = self._try_autotracking_acap(opener, enable)
         ret['success'] = success
         ret['message'] = message
@@ -818,6 +866,7 @@ class ControlAxis():
         """
         opener = self._get_digest_opener()
         urls = (
+            'http://%s/axis-cgi/ptz-autotracking/admin.cgi' % self.hostname,
             'http://%s/axis-cgi/ptz-autotracking/operator.cgi' % self.hostname,
             'http://%s/local/axis-ptz-autotracking/settings.fcgi' % self.hostname,
         )
