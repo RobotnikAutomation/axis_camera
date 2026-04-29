@@ -657,6 +657,42 @@ class ControlAxis():
         except (urllib_error.URLError, socket.timeout) as e:
             return False, 'VAPIX operator.cgi connection error: %s' % str(e)
 
+    def _try_autotracking_admin(self, opener, enable):
+        """
+        Tries to set autotracking via VAPIX PTZ Autotracking admin endpoint.
+        Returns (success, message) tuple. success=None means 404 => try fallback.
+        """
+        url = 'http://%s/axis-cgi/ptz-autotracking/admin.cgi' % self.hostname
+        payload = {
+            'apiVersion': '1.0',
+            'method': 'setAutotrackingState',
+            'params': {'enabled': bool(enable)}
+        }
+        try:
+            request = urllib_request.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'}
+            )
+            response = opener.open(request, timeout=5)
+            body = response.read().decode('utf-8', errors='replace').strip()
+            if response.getcode() in (200, 204):
+                if body:
+                    try:
+                        body_json = json.loads(body)
+                    except Exception:
+                        body_json = None
+                    if isinstance(body_json, dict) and isinstance(body_json.get('error'), dict):
+                        return False, 'VAPIX admin.cgi error: %s' % str(body_json['error'].get('code'))
+                return True, 'Auto-tracking %s via VAPIX admin.cgi' % ('enabled' if enable else 'disabled')
+            return False, 'VAPIX admin.cgi HTTP %d' % response.getcode()
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'VAPIX admin.cgi not found (404)'
+            return False, 'VAPIX admin.cgi HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return False, 'VAPIX admin.cgi connection error: %s' % str(e)
+
     def _try_autotracking_acap(self, opener, enable):
         """
         Tries to set autotracking via the PTZ Autotracker ACAP app local endpoint.
@@ -699,10 +735,12 @@ class ControlAxis():
         """
         Enables or disables auto-tracking on Axis PTZ cameras.
 
-        Uses a two-tier approach to support a wide range of camera models:
-          1. VAPIX PTZ Autotracking API (/axis-cgi/ptz-autotracking/operator.cgi)
-             - Official Axis API, available on cameras with firmware >= 10.x
-          2. PTZ Autotracker ACAP app local API (/local/axis-ptz-autotracking/settings.fcgi)
+          Uses a three-tier approach to support a wide range of camera models:
+             1. VAPIX PTZ Autotracking admin API (/axis-cgi/ptz-autotracking/admin.cgi)
+                 - Newer firmware endpoint.
+             2. VAPIX PTZ Autotracking operator API (/axis-cgi/ptz-autotracking/operator.cgi)
+                 - Legacy endpoint.
+             3. PTZ Autotracker ACAP app local API (/local/axis-ptz-autotracking/settings.fcgi)
              - The app's own REST endpoint, used by the web UI, available on any
                camera with the PTZ Autotracker ACAP app installed (e.g. P5676-LE)
 
@@ -711,7 +749,17 @@ class ControlAxis():
         ret = {'success': False, 'message': ''}
         opener = self._get_digest_opener()
 
-        # 1. Try official VAPIX endpoint first
+        # 1. Try VAPIX admin endpoint first
+        success, message = self._try_autotracking_admin(opener, enable)
+        if success is True:
+            ret['success'] = True
+            ret['message'] = message
+            return ret
+        if success is False:
+            ret['message'] = message
+            return ret
+
+        # 2. Try legacy VAPIX endpoint
         success, message = self._try_autotracking_vapix(opener, enable)
         if success is True:
             ret['success'] = True
@@ -722,7 +770,7 @@ class ControlAxis():
             return ret
 
         # success is None => 404, fall through to ACAP app endpoint
-        # 2. Fall back to ACAP app local endpoint
+        # 3. Fall back to ACAP app local endpoint
         success, message = self._try_autotracking_acap(opener, enable)
         ret['success'] = success
         ret['message'] = message
@@ -818,6 +866,7 @@ class ControlAxis():
         """
         opener = self._get_digest_opener()
         urls = (
+            'http://%s/axis-cgi/ptz-autotracking/admin.cgi' % self.hostname,
             'http://%s/axis-cgi/ptz-autotracking/operator.cgi' % self.hostname,
             'http://%s/local/axis-ptz-autotracking/settings.fcgi' % self.hostname,
         )
@@ -833,6 +882,318 @@ class ControlAxis():
             'success': False,
             'enabled': None,
             'message': '; '.join(errors)
+        }
+
+    _AOA_CONTROL_PATH = '/local/objectanalytics/control.cgi'
+    _AOA_MODE_TO_CLASSES = {
+        # Confirmed from AOA UI payloads:
+        # motion  -> objectClassifications omitted
+        # person  -> [{'type': 'human'}]
+        # vehicle -> [{'type': 'vehicle'}]
+        'motion': tuple(),
+        'person': ('human',),
+        'vehicle': ('vehicle',),
+    }
+
+    def _normalize_tracking_mode(self, mode):
+        if mode is None:
+            return 'auto'
+        lowered = str(mode).strip().lower()
+        alias = {
+            'human': 'person',
+            'people': 'person',
+            'car': 'vehicle',
+            'movement': 'motion',
+        }
+        return alias.get(lowered, lowered)
+
+    def _call_aoa(self, opener, method, params):
+        url = 'http://%s%s' % (self.hostname, self._AOA_CONTROL_PATH)
+        payload = {
+            'apiVersion': '1.3',
+            'context': 'AOA_NATIVE_UI',
+            'method': method,
+            'params': params,
+        }
+        request = urllib_request.Request(
+            url,
+            data=json.dumps(payload).encode('utf-8'),
+            headers={
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+        )
+        response = opener.open(request, timeout=5)
+        body = response.read().decode('utf-8', errors='replace').strip()
+        return response.getcode(), json.loads(body) if body else {}
+
+    def _get_aoa_configuration(self, opener):
+        try:
+            status, body = self._call_aoa(opener, 'getConfiguration', {})
+            if status not in (200, 204):
+                return None, 'AOA getConfiguration HTTP %d' % status
+            if isinstance(body.get('error'), dict):
+                return None, 'AOA getConfiguration error: %s' % body['error'].get('message', body['error'])
+            data = body.get('data')
+            if not isinstance(data, dict):
+                return None, 'AOA getConfiguration returned no data'
+            return data, 'AOA configuration read'
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'AOA control.cgi not found (404)'
+            return None, 'AOA getConfiguration HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return None, 'AOA getConfiguration connection error: %s' % str(e)
+        except Exception as e:
+            return None, 'AOA getConfiguration parse error: %s' % str(e)
+
+    def _get_aoa_configuration_capabilities(self, opener):
+        try:
+            status, body = self._call_aoa(opener, 'getConfigurationCapabilities', {})
+            if status not in (200, 204):
+                return None, 'AOA getConfigurationCapabilities HTTP %d' % status
+            if isinstance(body.get('error'), dict):
+                return None, 'AOA getConfigurationCapabilities error: %s' % body['error'].get('message', body['error'])
+            data = body.get('data')
+            if not isinstance(data, dict):
+                return None, 'AOA getConfigurationCapabilities returned no data'
+            return data, 'AOA configuration capabilities read'
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'AOA control.cgi not found (404)'
+            return None, 'AOA getConfigurationCapabilities HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return None, 'AOA getConfigurationCapabilities connection error: %s' % str(e)
+        except Exception as e:
+            return None, 'AOA getConfigurationCapabilities parse error: %s' % str(e)
+
+    def _extract_supported_modes_from_aoa_capabilities(self, capabilities):
+        supported_modes = set(['motion'])
+
+        scenarios = capabilities.get('scenarios', {}) if isinstance(capabilities, dict) else {}
+        supported_scenarios = scenarios.get('supportedScenarios', []) if isinstance(scenarios, dict) else []
+        if isinstance(supported_scenarios, list) and 'motion' not in supported_scenarios:
+            supported_modes.discard('motion')
+
+        def walk_classifications(items):
+            if not isinstance(items, list):
+                return
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get('type', '')).strip().lower()
+                if item_type == 'human':
+                    supported_modes.add('person')
+                elif item_type == 'vehicle':
+                    supported_modes.add('vehicle')
+                walk_classifications(item.get('subTypes', []))
+
+        walk_classifications(capabilities.get('objectClassifications', []))
+
+        if not supported_modes:
+            supported_modes.add('motion')
+
+        ordered = [mode for mode in ('motion', 'person', 'vehicle') if mode in supported_modes]
+        return ordered if ordered else ['motion']
+
+    def _mode_from_aoa_configuration(self, config):
+        scenarios = config.get('scenarios', []) if isinstance(config, dict) else []
+        if not scenarios:
+            return 'motion'
+
+        saw_motion_pattern = False
+        classes = set()
+        for scenario in scenarios:
+            if not isinstance(scenario, dict):
+                continue
+            object_classifications = scenario.get('objectClassifications')
+            if object_classifications is None:
+                saw_motion_pattern = True
+                continue
+            if not isinstance(object_classifications, list) or len(object_classifications) == 0:
+                saw_motion_pattern = True
+                continue
+            for item in object_classifications:
+                if not isinstance(item, dict):
+                    continue
+                t = str(item.get('type', '')).strip().lower()
+                if t == 'human':
+                    classes.add('person')
+                elif t == 'vehicle':
+                    classes.add('vehicle')
+
+        if saw_motion_pattern:
+            return 'motion'
+        if classes == {'person'}:
+            return 'person'
+        if classes == {'vehicle'}:
+            return 'vehicle'
+        return 'motion'
+
+    def _prepare_aoa_configuration_for_mode(self, config, mode):
+        updated = json.loads(json.dumps(config))
+        scenarios = updated.get('scenarios', [])
+        if not isinstance(scenarios, list):
+            return updated
+
+        if mode == 'motion':
+            for scenario in scenarios:
+                if isinstance(scenario, dict) and 'objectClassifications' in scenario:
+                    del scenario['objectClassifications']
+            return updated
+
+        desired = [{'type': t} for t in self._AOA_MODE_TO_CLASSES[mode]]
+        for scenario in scenarios:
+            if not isinstance(scenario, dict):
+                continue
+            scenario['objectClassifications'] = list(desired)
+        return updated
+
+    def _set_aoa_mode(self, opener, mode):
+        config, message = self._get_aoa_configuration(opener)
+        if config is None:
+            if 'not found (404)' in message:
+                return None, message
+            return False, message
+
+        new_config = self._prepare_aoa_configuration_for_mode(config, mode)
+        try:
+            status, body = self._call_aoa(opener, 'setConfiguration', new_config)
+            if status not in (200, 204):
+                return False, 'AOA setConfiguration HTTP %d' % status
+            if isinstance(body.get('error'), dict):
+                return False, 'AOA setConfiguration error: %s' % body['error'].get('message', body['error'])
+
+            verify_config, verify_message = self._get_aoa_configuration(opener)
+            if verify_config is None:
+                return False, 'AOA setConfiguration accepted but verify failed: %s' % verify_message
+            effective_mode = self._mode_from_aoa_configuration(verify_config)
+            if effective_mode != mode:
+                return False, 'AOA setConfiguration accepted but effective mode is %s (requested %s)' % (effective_mode, mode)
+            return True, 'mode %s applied via AOA control.cgi' % mode
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'AOA control.cgi not found (404)'
+            return False, 'AOA setConfiguration HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return False, 'AOA setConfiguration connection error: %s' % str(e)
+
+    def setAutoTrackingWithMode(self, enabled, mode='auto'):
+        """
+        Enables/disables autotracking and applies tracking mode when requested.
+        Supported modes: motion | person | vehicle | auto
+        """
+        normalized_mode = self._normalize_tracking_mode(mode)
+        if normalized_mode not in ('auto', 'motion', 'person', 'vehicle'):
+            return {
+                'success': False,
+                'applied_mode': 'motion',
+                'fallback_applied': False,
+                'message': 'unsupported mode "%s"; expected motion|person|vehicle|auto' % str(mode)
+            }
+
+        toggle_result = self.setAutoTracking(enabled)
+        if not toggle_result.get('success'):
+            return {
+                'success': False,
+                'applied_mode': 'motion',
+                'fallback_applied': False,
+                'message': toggle_result.get('message', 'failed to toggle autotracking')
+            }
+
+        opener = self._get_digest_opener()
+        capabilities = self.getAutoTrackingCapabilities()
+        supported_modes = capabilities.get('supported_modes', ['motion'])
+
+        if normalized_mode == 'auto':
+            current_mode = 'motion'
+            config, _ = self._get_aoa_configuration(opener)
+            if config is not None:
+                current_mode = self._mode_from_aoa_configuration(config)
+            return {
+                'success': True,
+                'applied_mode': current_mode,
+                'fallback_applied': False,
+                'message': '%s; mode kept as auto' % toggle_result['message']
+            }
+
+        if normalized_mode not in supported_modes:
+            if 'motion' in supported_modes:
+                return {
+                    'success': True,
+                    'applied_mode': 'motion',
+                    'fallback_applied': True,
+                    'message': '%s; mode "%s" not supported by this device, fallback to motion'
+                               % (toggle_result['message'], normalized_mode)
+                }
+            return {
+                'success': False,
+                'applied_mode': 'motion',
+                'fallback_applied': False,
+                'message': '%s; mode "%s" not supported and motion fallback unavailable'
+                           % (toggle_result['message'], normalized_mode)
+            }
+
+        mode_success, mode_message = self._set_aoa_mode(opener, normalized_mode)
+        if normalized_mode == 'motion' and mode_success is None:
+            return {
+                'success': True,
+                'applied_mode': 'motion',
+                'fallback_applied': False,
+                'message': '%s; motion mode assumed because AOA is not available' % toggle_result['message']
+            }
+        if mode_success is True:
+            return {
+                'success': True,
+                'applied_mode': normalized_mode,
+                'fallback_applied': False,
+                'message': '%s; %s' % (toggle_result['message'], mode_message)
+            }
+
+        if normalized_mode != 'motion':
+            fallback_success, fallback_message = self._set_aoa_mode(opener, 'motion')
+            if fallback_success is True or fallback_success is None:
+                return {
+                    'success': True,
+                    'applied_mode': 'motion',
+                    'fallback_applied': True,
+                    'message': '%s; mode "%s" not supported (%s), fallback to motion (%s)'
+                               % (toggle_result['message'], normalized_mode, mode_message, fallback_message)
+                }
+
+        return {
+            'success': False,
+            'applied_mode': 'motion',
+            'fallback_applied': False,
+            'message': '%s; failed to apply mode "%s": %s' % (toggle_result['message'], normalized_mode, mode_message)
+        }
+
+    def getAutoTrackingCapabilities(self):
+        """
+        Returns supported modes and current autotracking status.
+        """
+        opener = self._get_digest_opener()
+
+        supported_modes = ['motion']
+        current_mode = 'motion'
+
+        capabilities, _ = self._get_aoa_configuration_capabilities(opener)
+        config, _ = self._get_aoa_configuration(opener)
+        if capabilities is not None:
+            supported_modes = self._extract_supported_modes_from_aoa_capabilities(capabilities)
+        if config is not None:
+            current_mode = self._mode_from_aoa_configuration(config)
+
+        state = self.getAutoTrackingState()
+        enabled = bool(state.get('enabled')) if state.get('enabled') is not None else False
+
+        return {
+            'success': True,
+            'supported_modes': supported_modes,
+            'current_mode': current_mode,
+            'enabled': enabled,
+            'message': state.get('message', '')
         }
 
     def getPTZState(self):

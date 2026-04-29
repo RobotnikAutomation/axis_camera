@@ -58,6 +58,8 @@ from robotnik_msgs.srv import SetString, SetStringResponse
 from robotnik_msgs.srv import GetStringList, GetStringListResponse
 from robotnik_msgs.srv import GetImageSettings, GetImageSettingsResponse
 from robotnik_msgs.srv import SetAutoTracking, SetAutoTrackingResponse
+from robotnik_msgs.srv import GetAutoTrackingCapabilities, GetAutoTrackingCapabilitiesResponse
+from robotnik_msgs.msg import AutoTrackingStatus
 from std_msgs.msg import Bool
 
 class AxisPTZ(threading.Thread):
@@ -137,6 +139,10 @@ class AxisPTZ(threading.Thread):
 
         # Auto-tracking state
         self.autotracking_active = False
+        self.autotracking_requested_mode = 'auto'
+        self.autotracking_active_mode = 'motion'
+        self.autotracking_supported_modes = ['motion']
+        self.autotracking_fallback_applied = False
 
         # Detect effective focus range at runtime
         self.effective_focus_min_raw = None
@@ -288,9 +294,17 @@ class AxisPTZ(threading.Thread):
         self.get_white_balance_mode_service = rospy.Service('~get_white_balance_mode', GetStringList, self.getWhiteBalanceModeServiceCb)
         self.get_image_settings_service = rospy.Service('~get_image_settings', GetImageSettings, self.getImageSettingsServiceCb)
         self.autotracking_pub = rospy.Publisher('~autotracking_active', Bool, queue_size=10, latch=True)
+        self.autotracking_status_pub = rospy.Publisher('~autotracking_status', AutoTrackingStatus, queue_size=10, latch=True)
         self.autotracking_pub.publish(Bool(data=self.autotracking_active))
+        self._publishAutoTrackingStatus()
         self.set_autotracking_service = rospy.Service('~set_autotracking', SetAutoTracking, self.setAutoTrackingServiceCb)
+        self.get_autotracking_capabilities_service = rospy.Service(
+            '~get_autotracking_capabilities',
+            GetAutoTrackingCapabilities,
+            self.getAutoTrackingCapabilitiesServiceCb
+        )
         self.loadDeviceInfo()
+        self._loadAutoTrackingCapabilities()
         self.device_info_service = rospy.Service('~get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
 
         # Diagnostic Updater
@@ -336,16 +350,52 @@ class AxisPTZ(threading.Thread):
 
     def setAutoTrackingServiceCb(self, req):
         response = SetAutoTrackingResponse()
-        result = self.controller.setAutoTracking(req.enable)
+        result = self.controller.setAutoTrackingWithMode(req.enabled, req.mode)
         response.success = result['success']
+        response.applied_mode = result.get('applied_mode', 'motion')
+        response.fallback_applied = result.get('fallback_applied', False)
         response.message = result['message']
         if result['success']:
-            self.autotracking_active = req.enable
+            self.autotracking_active = req.enabled
+            self.autotracking_requested_mode = req.mode
+            self.autotracking_active_mode = response.applied_mode
+            self.autotracking_fallback_applied = response.fallback_applied
             self.autotracking_pub.publish(Bool(data=self.autotracking_active))
+            self._publishAutoTrackingStatus()
             rospy.loginfo('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
         return response
+
+    def getAutoTrackingCapabilitiesServiceCb(self, req):
+        response = GetAutoTrackingCapabilitiesResponse()
+        result = self.controller.getAutoTrackingCapabilities()
+        response.supported_modes = result.get('supported_modes', ['motion'])
+        response.current_mode = result.get('current_mode', 'motion')
+        response.enabled = bool(result.get('enabled', False))
+
+        # keep cached state aligned for status publication
+        self.autotracking_supported_modes = list(response.supported_modes)
+        self.autotracking_active_mode = response.current_mode
+        self.autotracking_active = response.enabled
+        self._publishAutoTrackingStatus()
+        return response
+
+    def _loadAutoTrackingCapabilities(self):
+        result = self.controller.getAutoTrackingCapabilities()
+        self.autotracking_supported_modes = result.get('supported_modes', ['motion'])
+        self.autotracking_active_mode = result.get('current_mode', 'motion')
+        self.autotracking_active = bool(result.get('enabled', False))
+        self.autotracking_pub.publish(Bool(data=self.autotracking_active))
+        self._publishAutoTrackingStatus()
+
+    def _publishAutoTrackingStatus(self):
+        msg = AutoTrackingStatus()
+        msg.enabled = self.autotracking_active
+        msg.requested_mode = self.autotracking_requested_mode
+        msg.active_mode = self.autotracking_active_mode
+        msg.fallback_applied = self.autotracking_fallback_applied
+        self.autotracking_status_pub.publish(msg)
 
     def pollAutoTrackingState(self, event):
         """
@@ -357,11 +407,17 @@ class AxisPTZ(threading.Thread):
             return
 
         camera_state = bool(result['enabled'])
-        if camera_state != self.autotracking_active:
+        caps = self.controller.getAutoTrackingCapabilities()
+        camera_mode = caps.get('current_mode', self.autotracking_active_mode)
+        self.autotracking_supported_modes = caps.get('supported_modes', self.autotracking_supported_modes)
+
+        if camera_state != self.autotracking_active or camera_mode != self.autotracking_active_mode:
             self.autotracking_active = camera_state
+            self.autotracking_active_mode = camera_mode
             self.autotracking_pub.publish(Bool(data=self.autotracking_active))
-            rospy.loginfo('%s:pollAutoTrackingState: autotracking updated from camera: %s',
-                          rospy.get_name(), self.autotracking_active)
+            self._publishAutoTrackingStatus()
+            rospy.loginfo('%s:pollAutoTrackingState: autotracking updated from camera: enabled=%s mode=%s',
+                          rospy.get_name(), self.autotracking_active, self.autotracking_active_mode)
 
     def commandPTZCb(self, msg):
         """

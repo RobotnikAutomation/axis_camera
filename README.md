@@ -127,6 +127,7 @@ roslaunch axis_camera axis_ptz.launch ip_address:=<camera_ip>
 * `~camera_parameters` (`robotnik_msgs/CameraParameters`) — Zoom range and step configuration.
 * `~joint_states` (`sensor_msgs/JointState`) — Pan, tilt and zoom as joint positions.
 * `~autotracking_active` (`std_msgs/Bool`) — Current auto-tracking state. Latched topic; `true` when auto-tracking is active, `false` otherwise.
+* `~autotracking_status` (`robotnik_msgs/AutoTrackingStatus`) — Extended auto-tracking status including `enabled`, `requested_mode`, `active_mode`, and `fallback_applied`.
 * `~image_settings` (`robotnik_msgs/ImageSettings`) — Current image settings published at `image_settings_pub_rate`. The `is_valid` field indicates whether all fields were successfully read from the camera. On cameras with limited VAPIX read support, last-known values may be used as a fallback (see [Image settings behaviour](#image-settings-behaviour)).
 
 ### Subscribed Topics
@@ -184,25 +185,47 @@ auto: false"
 ```
 
 #### `~set_autotracking` (`robotnik_msgs/SetAutoTracking`)
-Enables or disables auto-tracking on supported camera models.
+Enables or disables auto-tracking on supported camera models and requests an auto-tracking mode.
 
 **Important**: When auto-tracking is active, manual PTZ commands are suppressed by the camera. The node honors this by not sending PTZ commands while `~autotracking_active` is true.
 
 
 Request fields:
-* `enable` (`bool`): if `true`, enable auto-tracking; if `false`, disable it.
+* `enabled` (`bool`): if `true`, enable auto-tracking; if `false`, disable it.
+* `mode` (`string`): requested mode. Supported values: `motion`, `person`, `vehicle`, `auto`.
 
 Response fields:
 * `success` (`bool`): `true` if the command succeeded; `false` if the camera does not support auto-tracking or a communication error occurred.
+* `applied_mode` (`string`): mode effectively applied by the node/camera.
+* `fallback_applied` (`bool`): `true` when the requested mode is unsupported and the node falls back to `motion`.
 * `message` (`string`): status or error message.
 
 Examples:
 ```bash
-# Enable auto-tracking
-rosservice call /axis_camera_ptz/set_autotracking "enable: true"
+# Enable auto-tracking in motion mode
+rosservice call /axis_camera_ptz/set_autotracking "enabled: true
+mode: 'motion'"
 
 # Disable auto-tracking
-rosservice call /axis_camera_ptz/set_autotracking "enable: false"
+rosservice call /axis_camera_ptz/set_autotracking "enabled: false
+mode: 'auto'"
+
+# Request person mode
+rosservice call /axis_camera_ptz/set_autotracking "enabled: true
+mode: 'person'"
+```
+
+#### `~get_autotracking_capabilities` (`robotnik_msgs/GetAutoTrackingCapabilities`)
+Returns the currently detected auto-tracking capabilities and active mode.
+
+Response fields:
+* `supported_modes` (`string[]`): modes supported by the connected device, derived from Object Analytics capabilities.
+* `current_mode` (`string`): mode currently active in the camera/Object Analytics configuration.
+* `enabled` (`bool`): current auto-tracking enabled state.
+
+Example:
+```bash
+rosservice call /axis_camera_ptz/get_autotracking_capabilities
 ```
 
 > **Note on service names**: service names depend on the node namespace. Run `rosservice list` to get the exact names in your setup.
@@ -279,6 +302,11 @@ relative: false"
 * Auto-tracking is controlled via two endpoints tried in order:
   1. **VAPIX PTZ Autotracking API** (`/axis-cgi/ptz-autotracking/operator.cgi`) — official endpoint available on cameras with firmware ≥ 10.x.
   2. **PTZ Autotracker ACAP app** (`/local/axis-ptz-autotracking/settings.fcgi`) — the app's own REST API, used by the camera web UI. Available on any camera with the PTZ Autotracker ACAP app installed.
+* The driver detects supported modes from Axis Object Analytics capabilities and exposes them through `~get_autotracking_capabilities`.
+* Requested modes `person` and `vehicle` are applied through Axis Object Analytics configuration. If a requested mode is not supported, the node falls back to `motion` and reports `fallback_applied=true`.
+* On devices that only provide basic on/off autotracking, `motion` still works even when Object Analytics is not available.
+* `active_mode` in `~autotracking_status` reflects the mode actually applied, which may differ from `requested_mode` after a fallback.
+* On some Axis models, PTZ autotracking may still follow generic motion even when Object Analytics is configured for `person` or `vehicle`. In that case, the selected mode still reflects the analytics configuration and reported capabilities, but PTZ target filtering remains camera-dependent.
 * If neither endpoint responds, `success=false` is returned with a descriptive message (e.g. app not installed).
 * While auto-tracking is active, the node suppresses all outgoing PTZ commands (both topic-based commands and the continuous control loop).
 * The node polls the camera every 2 seconds to detect state changes made outside ROS (e.g. via the camera web UI or VMS). The `~autotracking_active` topic is updated automatically if a change is detected.
