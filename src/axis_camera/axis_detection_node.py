@@ -32,6 +32,9 @@ class AxisMetadataDetectionNode(object):
             rospy.logwarn('%s: invalid ~filter_class=%s, using all', rospy.get_name(), self.filter_class)
             self.filter_class = 'all'
 
+        # Publish initial value so rosparam get works from startup
+        rospy.set_param('~filter_class', self.filter_class)
+
         self.pub_filtered = rospy.Publisher('~metadata_filtered', AxisMetadataDetectionArray, queue_size=10)
 
         scheme = 'wss' if self.use_tls else 'ws'
