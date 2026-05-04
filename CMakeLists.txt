@@ -26,6 +26,8 @@ catkin_python_setup()
 add_message_files(DIRECTORY msg 
 FILES
    Axis.msg
+  AxisMetadataDetection.msg
+  AxisMetadataDetectionArray.msg
    ptz.msg
    inputs_outputs.msg
 )
@@ -50,6 +52,9 @@ catkin_install_python(PROGRAMS src/axis_camera/__init__.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 catkin_install_python(PROGRAMS src/axis_camera/axis_ptz_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+catkin_install_python(PROGRAMS src/axis_camera/axis_detection_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   
 catkin_install_python(PROGRAMS src/axis_camera/axis_stream_node.py

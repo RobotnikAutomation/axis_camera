@@ -16,6 +16,7 @@
 	<arg name="zoom_joint" default="$(arg prefix)$(arg node_name)_zoom_joint"/>
 	<arg name="initialization_delay" default="0.0"/>
 	<arg name="send_constantly" default="false"/>
+	<arg name="run_detection" default="true"/>
 
 	<rosparam file="$(arg ptz_config_file)" command="load" if="$(arg ptz_enabled)"/>
 	<param name="hostname" value="$(arg ip_address)"/>
@@ -30,4 +31,7 @@
 	<param name="send_constantly" value="$(arg send_constantly)"/>
 
 	<node pkg="axis_camera" type="axis_ptz_node.py" name="$(arg node_name)_ptz" output="screen" required="true"/>
+	<node pkg="axis_camera" type="axis_detection_node.py" name="$(arg node_name)_detection" output="screen" if="$(arg run_detection)">
+		<param name="hostname" value="$(arg ip_address)"/>
+	</node>
 </launch>
