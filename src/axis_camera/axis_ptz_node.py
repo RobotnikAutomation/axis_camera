@@ -53,7 +53,6 @@ import diagnostic_msgs
 
 from axis_camera.axis_lib.axis_control import ControlAxis
 from axis_camera.axis_lib.device_info import get_device_info_with_fallback
-from axis_camera.msg import AxisMetadataDetectionArray
 from robotnik_msgs.srv import SetInt16, SetInt16Response
 from robotnik_msgs.srv import SetString, SetStringResponse
 from robotnik_msgs.srv import GetStringList, GetStringListResponse
@@ -145,15 +144,6 @@ class AxisPTZ(threading.Thread):
         self.autotracking_supported_modes = ['motion']
         self.autotracking_fallback_applied = False
 
-        # Software auto-tracking state (person / vehicle class filtering)
-        self.autotracking_sw_active = False
-        self.sw_tracking_filter_class = 'all'
-        self.sw_tracking_gain_pan = args.get('sw_tracking_gain_pan', 0.5)
-        self.sw_tracking_gain_tilt = args.get('sw_tracking_gain_tilt', 0.5)
-        self.sw_tracking_timeout = args.get('sw_tracking_timeout', 2.0)
-        self.sw_tracking_min_interval = args.get('sw_tracking_min_interval', 0.1)
-        self.sw_tracking_last_detection = rospy.Time(0)
-        self.sw_tracking_last_cmd_time = rospy.Time(0)
         # Param name in the detection node to keep filter_class in sync with autotracking mode
         self.sw_detection_filter_param = args.get('sw_detection_filter_param', 'axis_camera_detection/filter_class')
         rospy.set_param('~sw_detection_filter_param', self.sw_detection_filter_param)
@@ -289,8 +279,6 @@ class AxisPTZ(threading.Thread):
         ns = rospy.get_namespace()
         self.pub = rospy.Publisher("~camera_params", AxisMsg, queue_size=10)
         self.sub = rospy.Subscriber("~ptz_command", ptz, self.commandPTZCb)
-        sw_tracking_topic = rospy.get_param('~sw_tracking_detection_topic', 'axis_camera_detection/metadata_filtered')
-        self.sw_tracking_sub = rospy.Subscriber(sw_tracking_topic, AxisMetadataDetectionArray, self._swTrackingDetectionCb)
         # Publish the joint state of the pan & tilt
         self.joint_state_publisher = rospy.Publisher(self.joint_states_topic, JointState, queue_size=10)
         # Publish camera zoom info
@@ -367,48 +355,22 @@ class AxisPTZ(threading.Thread):
     def setAutoTrackingServiceCb(self, req):
         response = SetAutoTrackingResponse()
         normalized_mode = self.controller._normalize_tracking_mode(req.mode)
-        sw_modes = ('person', 'vehicle')
-        use_sw_tracking = req.enabled and normalized_mode in sw_modes
-
-        if use_sw_tracking:
-            # Disable native autotracking (in case it was on) then activate sw tracking
-            if self.autotracking_active and not self.autotracking_sw_active:
-                self.controller.setAutoTracking(False)
-            self.autotracking_sw_active = True
-            self.sw_tracking_filter_class = 'human' if normalized_mode == 'person' else 'vehicle'
-            self.sw_tracking_last_detection = rospy.Time(0)
-            response.success = True
-            response.applied_mode = normalized_mode
-            response.fallback_applied = False
-            response.message = 'software tracking enabled for class=%s' % self.sw_tracking_filter_class
-            self.autotracking_active = True
+        result = self.controller.setAutoTrackingWithMode(req.enabled, req.mode)
+        response.success = result['success']
+        response.applied_mode = result.get('applied_mode', 'motion')
+        response.fallback_applied = result.get('fallback_applied', False)
+        response.message = result['message']
+        if result['success']:
+            self.autotracking_active = req.enabled
             self.autotracking_requested_mode = req.mode
-            self.autotracking_active_mode = normalized_mode
-            self.autotracking_fallback_applied = False
-            self.autotracking_pub.publish(Bool(data=True))
+            self.autotracking_active_mode = response.applied_mode
+            self.autotracking_fallback_applied = response.fallback_applied
+            self.autotracking_pub.publish(Bool(data=self.autotracking_active))
             self._publishAutoTrackingStatus()
             self._syncDetectionFilterClass(normalized_mode)
-            rospy.loginfo('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), response.message)
+            rospy.loginfo('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
         else:
-            # Disabling or native mode: stop sw tracking first if active
-            if self.autotracking_sw_active:
-                self.autotracking_sw_active = False
-            result = self.controller.setAutoTrackingWithMode(req.enabled, req.mode)
-            response.success = result['success']
-            response.applied_mode = result.get('applied_mode', 'motion')
-            response.fallback_applied = result.get('fallback_applied', False)
-            response.message = result['message']
-            if result['success']:
-                self.autotracking_active = req.enabled
-                self.autotracking_requested_mode = req.mode
-                self.autotracking_active_mode = response.applied_mode
-                self.autotracking_fallback_applied = response.fallback_applied
-                self.autotracking_pub.publish(Bool(data=self.autotracking_active))
-                self._publishAutoTrackingStatus()
-                self._syncDetectionFilterClass(normalized_mode)
-                rospy.loginfo('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
-            else:
-                rospy.logerr('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
+            rospy.logerr('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
         return response
 
     def _syncDetectionFilterClass(self, mode):
@@ -428,52 +390,6 @@ class AxisPTZ(threading.Thread):
         except Exception as exc:
             rospy.logwarn('%s:_syncDetectionFilterClass: could not set param %s: %s',
                           rospy.get_name(), target_param, exc)
-
-    def _swTrackingDetectionCb(self, msg):
-        """Callback from metadata_filtered: drives pan/tilt to center the best detection."""
-        if not self.autotracking_sw_active:
-            return
-        if not self.ptz_syncronized:
-            return
-
-        now = rospy.Time.now()
-
-        # Rate-limit commands
-        if (now - self.sw_tracking_last_cmd_time).to_sec() < self.sw_tracking_min_interval:
-            return
-
-        candidates = [d for d in msg.detections if d.class_label == self.sw_tracking_filter_class]
-        if not candidates:
-            return
-
-        self.sw_tracking_last_detection = now
-
-        # Pick the detection with the largest bounding box area (most prominent target)
-        best = max(candidates, key=lambda d: (d.right - d.left) * (d.bottom - d.top))
-
-        cx = (best.left + best.right) / 2.0
-        cy = (best.top + best.bottom) / 2.0
-
-        # Error: positive = object is to the right / below center
-        error_x = cx - 0.5
-        error_y = cy - 0.5
-
-        # Incremental pan/tilt in radians
-        delta_pan = self.sw_tracking_gain_pan * error_x
-        delta_tilt = -self.sw_tracking_gain_tilt * error_y  # negative: object below -> tilt down
-
-        new_pan, new_tilt, _ = self.enforcePTZLimits(
-            self.desired_pan + delta_pan,
-            self.desired_tilt + delta_tilt,
-            self.desired_zoom,
-        )
-        self.desired_pan = new_pan
-        self.desired_tilt = new_tilt
-        self.t_last_command_time = now
-        self.sw_tracking_last_cmd_time = now
-        self.sendPTZCommand()
-        rospy.logdebug_throttle(1, '%s:_swTrackingDetectionCb: error_x=%.3f error_y=%.3f delta_pan=%.3f delta_tilt=%.3f',
-                                rospy.get_name(), error_x, error_y, delta_pan, delta_tilt)
 
     def getAutoTrackingCapabilitiesServiceCb(self, req):
         response = GetAutoTrackingCapabilitiesResponse()
@@ -1236,10 +1152,6 @@ def main():
         'tilt_offset': 0.0,
         'image_settings_pub_rate': 1.0,
         'iris_two_step_control': False,
-        'sw_tracking_gain_pan': 0.5,
-        'sw_tracking_gain_tilt': 0.5,
-        'sw_tracking_timeout': 2.0,
-        'sw_tracking_min_interval': 0.1,
         'sw_detection_filter_param': 'axis_camera_detection/filter_class'
     }
     args = {}
