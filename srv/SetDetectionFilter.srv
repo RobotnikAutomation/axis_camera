@@ -1,0 +1,5 @@
+string filter_class
+---
+bool success
+string applied_filter
+string message

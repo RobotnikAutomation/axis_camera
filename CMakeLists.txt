@@ -28,12 +28,15 @@ FILES
    Axis.msg
    ptz.msg
    inputs_outputs.msg
+  AxisMetadataDetection.msg
+  AxisMetadataDetectionArray.msg
 )
 
 add_service_files(DIRECTORY srv
 FILES
    set_ptz.srv
    set_digital_output.srv
+  SetDetectionFilter.srv
 )
 
 generate_messages(DEPENDENCIES sensor_msgs geometry_msgs std_msgs robotnik_msgs axis_camera)
@@ -56,6 +59,9 @@ catkin_install_python(PROGRAMS src/axis_camera/axis_stream_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   
 catkin_install_python(PROGRAMS src/axis_camera/axis_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+catkin_install_python(PROGRAMS src/axis_camera/axis_detection_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 catkin_install_python(PROGRAMS src/axis_camera/axis_ptz_sim.py
