@@ -37,6 +37,9 @@ class AxisMetadataDetectionNode(object):
         # Publish initial value so rosparam get works from startup
         rospy.set_param('~filter_class', self.filter_class)
 
+        self.pub_all = rospy.Publisher('~metadata_all', AxisMetadataDetectionArray, queue_size=10)
+        self.pub_human = rospy.Publisher('~metadata_human', AxisMetadataDetectionArray, queue_size=10)
+        self.pub_vehicle = rospy.Publisher('~metadata_vehicle', AxisMetadataDetectionArray, queue_size=10)
         self.pub_filtered = rospy.Publisher('~metadata_filtered', AxisMetadataDetectionArray, queue_size=10)
         self.pub_filter_status = rospy.Publisher('~filter_status', String, queue_size=1, latch=True)
         self.set_filter_srv = rospy.Service('~set_filter', SetDetectionFilter, self._set_filter_service_cb)
@@ -133,8 +136,19 @@ class AxisMetadataDetectionNode(object):
         }
 
     def _publish_detections(self, observations):
-        out = AxisMetadataDetectionArray()
-        out.header = Header(stamp=rospy.Time.now(), frame_id='axis_camera')
+        header = Header(stamp=rospy.Time.now(), frame_id='axis_camera')
+
+        out_all = AxisMetadataDetectionArray()
+        out_all.header = header
+
+        out_human = AxisMetadataDetectionArray()
+        out_human.header = header
+
+        out_vehicle = AxisMetadataDetectionArray()
+        out_vehicle.header = header
+
+        out_filtered = AxisMetadataDetectionArray()
+        out_filtered.header = header
 
         for obs in observations:
             if not isinstance(obs, dict):
@@ -149,7 +163,7 @@ class AxisMetadataDetectionNode(object):
                 cls_obj = {}
 
             class_label = str(cls_obj.get('type', 'unknown')).strip().lower()
-            if not self._allowed_class(class_label):
+            if class_label not in ('human', 'vehicle'):
                 continue
 
             left = bbox.get('left')
@@ -160,7 +174,7 @@ class AxisMetadataDetectionNode(object):
                 continue
 
             det = AxisMetadataDetection()
-            det.header = out.header
+            det.header = header
             det.track_id = str(obs.get('track_id', ''))
             det.class_label = class_label if class_label else 'unknown'
             det.score = float(cls_obj.get('score', 0.0) or 0.0)
@@ -169,10 +183,23 @@ class AxisMetadataDetectionNode(object):
             det.right = float(right)
             det.bottom = float(bottom)
 
-            out.detections.append(det)
+            out_all.detections.append(det)
+            if class_label == 'human':
+                out_human.detections.append(det)
+            elif class_label == 'vehicle':
+                out_vehicle.detections.append(det)
 
-        if out.detections:
-            self.pub_filtered.publish(out)
+            if self._allowed_class(class_label):
+                out_filtered.detections.append(det)
+
+        if out_all.detections:
+            self.pub_all.publish(out_all)
+        if out_human.detections:
+            self.pub_human.publish(out_human)
+        if out_vehicle.detections:
+            self.pub_vehicle.publish(out_vehicle)
+        if out_filtered.detections:
+            self.pub_filtered.publish(out_filtered)
 
     def _extract_observations(self, msg_obj):
         try:
