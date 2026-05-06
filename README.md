@@ -266,3 +266,55 @@ relative: false"
 * After each write operation, the node reads the value back and rolls back if the camera applied an unexpected value (e.g. due to firmware clamping).
 * The `~image_settings` topic is published at `image_settings_pub_rate` Hz. If a read cycle fails, last-known values are re-published and `is_valid` is set to `false`. The `status_message` field explains the fallback reason.
 * On cameras with limited VAPIX read support (e.g. Axis P5676-LE), some fields may not be reliably readable. The node continues publishing and remains operational; only `is_valid` reflects the degraded state.
+
+---
+
+## Detection node
+
+`axis_detection_node.py` connects to Axis analytics metadata via WebSocket and publishes object detections as bounding boxes.
+
+### Detection parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `hostname` | string | `192.168.1.205` | Camera IP address or hostname |
+| `use_tls` | bool | `false` | Use WSS instead of WS |
+| `ws_source` | string | `analytics-scene-description` | VAPIX metadata source |
+| `channel_filter` | string[] | `['1']` | Channel filter sent in configure payload |
+| `filter_class` | string | `all` | Runtime filter for `metadata_filtered`: `all`, `human`, `vehicle` |
+
+### Published topics
+
+All detection topics publish `robotnik_msgs/AxisMetadataDetectionArray`.
+
+* `~metadata_all` — all supported detections (`human` + `vehicle`)
+* `~metadata_human` — only human detections
+* `~metadata_vehicle` — only vehicle detections
+* `~metadata_filtered` — detections filtered by current `filter_class`
+* `~filter_status` (`std_msgs/String`) — current runtime value of `filter_class`
+
+Each item in `detections[]` is `robotnik_msgs/AxisMetadataDetection` with:
+* `track_id`
+* `class_label`
+* `score`
+* bounding box normalized coordinates: `left`, `top`, `right`, `bottom`
+
+### Services
+
+#### `~set_filter` (`robotnik_msgs/SetDetectionFilter`)
+Sets the runtime filter used by `~metadata_filtered`.
+
+Request:
+* `filter_class` (`string`): `all`, `human` or `vehicle`
+
+Response:
+* `success` (`bool`)
+* `applied_filter` (`string`)
+* `message` (`string`)
+
+Examples:
+```bash
+rosservice call /axis_camera_detection/set_filter "filter_class: 'all'"
+rosservice call /axis_camera_detection/set_filter "filter_class: 'human'"
+rosservice call /axis_camera_detection/set_filter "filter_class: 'vehicle'"
+```
