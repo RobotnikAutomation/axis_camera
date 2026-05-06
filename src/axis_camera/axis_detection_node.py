@@ -8,8 +8,8 @@ import rospy
 from std_msgs.msg import Header
 from std_msgs.msg import String
 
-from axis_camera.msg import AxisMetadataDetection, AxisMetadataDetectionArray
-from axis_camera.srv import SetDetectionFilter, SetDetectionFilterResponse
+from robotnik_msgs.msg import AxisMetadataDetection, AxisMetadataDetectionArray
+from robotnik_msgs.srv import SetDetectionFilter, SetDetectionFilterResponse
 
 try:
     import websocket
@@ -50,6 +50,8 @@ class AxisMetadataDetectionNode(object):
         self._configured = threading.Event()
         self._stop = threading.Event()
         self._ws = None
+        self._ws_connected = False
+        self._ws_unsupported = False
         self._last_runtime_param_check = 0.0
 
         self._publish_filter_status()
@@ -83,6 +85,8 @@ class AxisMetadataDetectionNode(object):
 
     def _set_filter_service_cb(self, req):
         success, message = self._set_filter_class(req.filter_class, 'service')
+        if success and not self._ws_connected:
+            message += ' (camera disconnected, filter will apply on reconnect)'
         return SetDetectionFilterResponse(
             success=success,
             applied_filter=self.filter_class,
@@ -208,6 +212,8 @@ class AxisMetadataDetectionNode(object):
             return None
 
     def _on_open(self, ws):
+        self._ws_connected = True
+        self._ws_unsupported = False
         rospy.loginfo('%s: connected to %s', rospy.get_name(), self.ws_url)
         payload = self._build_configure_payload()
         ws.send(json.dumps(payload))
@@ -237,10 +243,18 @@ class AxisMetadataDetectionNode(object):
             self._publish_detections(observations)
 
     def _on_error(self, ws, err):
-        rospy.logwarn_throttle(5, '%s: metadata ws error: %s', rospy.get_name(), err)
+        err_str = str(err)
+        if '404' in err_str or 'Not Found' in err_str:
+            if not self._ws_unsupported:
+                rospy.logwarn('%s: camera does not support analytics endpoint (%s) -- will keep retrying silently', rospy.get_name(), err)
+                self._ws_unsupported = True
+        else:
+            rospy.logwarn_throttle(5, '%s: metadata ws error: %s', rospy.get_name(), err)
 
     def _on_close(self, ws, code, reason):
-        rospy.logwarn('%s: metadata ws closed (%s, %s)', rospy.get_name(), code, reason)
+        self._ws_connected = False
+        if not self._ws_unsupported:
+            rospy.logwarn('%s: metadata ws closed (%s, %s)', rospy.get_name(), code, reason)
 
     def spin(self):
         while not rospy.is_shutdown() and not self._stop.is_set():
@@ -267,7 +281,8 @@ class AxisMetadataDetectionNode(object):
             if rospy.is_shutdown() or self._stop.is_set():
                 break
 
-            rospy.sleep(2.0)
+            retry_interval = 30.0 if self._ws_unsupported else 2.0
+            rospy.sleep(retry_interval)
 
     def stop(self):
         self._stop.set()

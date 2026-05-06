@@ -28,15 +28,12 @@ FILES
    Axis.msg
    ptz.msg
    inputs_outputs.msg
-  AxisMetadataDetection.msg
-  AxisMetadataDetectionArray.msg
 )
 
 add_service_files(DIRECTORY srv
 FILES
    set_ptz.srv
    set_digital_output.srv
-  SetDetectionFilter.srv
 )
 
 generate_messages(DEPENDENCIES sensor_msgs geometry_msgs std_msgs robotnik_msgs axis_camera)
