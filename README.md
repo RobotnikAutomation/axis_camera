@@ -269,52 +269,32 @@ relative: false"
 
 ---
 
-## Detection node
+## Detection metadata
 
-`axis_detection_node.py` connects to Axis analytics metadata via WebSocket and publishes object detections as bounding boxes.
+Detection is integrated in `axis_ptz_node.py`.
 
-### Detection parameters
+The node connects to Axis analytics scene metadata over WebSocket and publishes bounding-box detections.
+
+### Detection parameters (axis_ptz_node)
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `hostname` | string | `192.168.1.205` | Camera IP address or hostname |
-| `use_tls` | bool | `false` | Use WSS instead of WS |
-| `ws_source` | string | `analytics-scene-description` | VAPIX metadata source |
-| `channel_filter` | string[] | `['1']` | Channel filter sent in configure payload |
-| `filter_class` | string | `all` | Runtime filter for `metadata_filtered`: `all`, `human`, `vehicle` |
+| `detection_enabled` | bool | `true` | Enable metadata detection stream |
+| `detection_use_tls` | bool | `false` | Use WSS instead of WS |
+| `detection_ws_source` | string | `analytics-scene-description` | VAPIX metadata source |
+| `detection_channel_filter` | string[] | `['1']` | Channel filter sent in configure payload |
 
 ### Published topics
 
-All detection topics publish `robotnik_msgs/AxisMetadataDetectionArray`.
-
-* `~metadata_all` — all supported detections (`human` + `vehicle`)
-* `~metadata_human` — only human detections
-* `~metadata_vehicle` — only vehicle detections
-* `~metadata_filtered` — detections filtered by current `filter_class`
-* `~filter_status` (`std_msgs/String`) — current runtime value of `filter_class`
+* `~detectors/status` (`robotnik_msgs/AxisMetadataDetectionArray`) — detections for supported classes (`human` and `vehicle`).
 
 Each item in `detections[]` is `robotnik_msgs/AxisMetadataDetection` with:
 * `track_id`
-* `class_label`
+* `class_label` (`human` or `vehicle`)
 * `score`
 * bounding box normalized coordinates: `left`, `top`, `right`, `bottom`
 
-### Services
+### Runtime behaviour
 
-#### `~set_filter` (`robotnik_msgs/SetDetectionFilter`)
-Sets the runtime filter used by `~metadata_filtered`.
-
-Request:
-* `filter_class` (`string`): `all`, `human` or `vehicle`
-
-Response:
-* `success` (`bool`)
-* `applied_filter` (`string`)
-* `message` (`string`)
-
-Examples:
-```bash
-rosservice call /axis_camera_detection/set_filter "filter_class: 'all'"
-rosservice call /axis_camera_detection/set_filter "filter_class: 'human'"
-rosservice call /axis_camera_detection/set_filter "filter_class: 'vehicle'"
-```
+* The detection topic is advertised only after the camera accepts metadata stream configuration.
+* On cameras that do not support the metadata endpoint (HTTP 404), detection is disabled and `~detectors/status` is not advertised.
