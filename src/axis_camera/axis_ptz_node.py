@@ -245,6 +245,15 @@ class AxisPTZ(threading.Thread):
             return 'vehicle'
         return 'unknown'
 
+    def _ensureDetectionPublisher(self):
+        if self.detection_pub is not None:
+            return
+
+        # Advertise only after metadata stream is confirmed.
+        # This keeps ~detectors/status hidden on cameras without metadata support.
+        self.detection_pub = rospy.Publisher("~detectors/status", AxisMetadataDetectionArray, queue_size=10)
+        rospy.loginfo('%s: metadata detections topic enabled (~detectors/status)', rospy.get_name())
+
     def _publishDetectionObservations(self, observations):
         if self.detection_pub is None:
             return
@@ -308,6 +317,7 @@ class AxisPTZ(threading.Thread):
 
         method = obj.get('method')
         if method == '%s:configure' % self.detection_ws_source:
+            self._ensureDetectionPublisher()
             rospy.loginfo('%s: metadata configure accepted', rospy.get_name())
             return
 
@@ -319,12 +329,15 @@ class AxisPTZ(threading.Thread):
         err_str = str(err)
         if '404' in err_str or 'Not Found' in err_str:
             if not self._detection_ws_unsupported:
-                rospy.logwarn('%s: camera does not support analytics endpoint (%s) -- will keep retrying silently', rospy.get_name(), err)
+                rospy.loginfo('%s: camera does not support analytics metadata endpoint -- detection disabled', rospy.get_name())
                 self._detection_ws_unsupported = True
+                self._detection_stop.set()
         else:
             rospy.logwarn_throttle(5, '%s: metadata ws error: %s', rospy.get_name(), err)
 
     def _onDetectionClose(self, ws, code, reason):
+        if rospy.is_shutdown() or self._detection_stop.is_set():
+            return
         if not self._detection_ws_unsupported:
             rospy.logwarn('%s: metadata ws closed (%s, %s)', rospy.get_name(), code, reason)
 
@@ -352,8 +365,7 @@ class AxisPTZ(threading.Thread):
             if rospy.is_shutdown() or self._detection_stop.is_set():
                 break
 
-            retry_interval = 30.0 if self._detection_ws_unsupported else 2.0
-            rospy.sleep(retry_interval)
+            rospy.sleep(2.0)
 
     def _startDetectionStream(self):
         if not self.detection_enabled:
@@ -478,7 +490,7 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Publish image settings state (base + explicit current alias)
         self.image_settings_pub = rospy.Publisher("~image_settings", ImageSettings, queue_size=10)
-        self.detection_pub = rospy.Publisher("~detectors/status", AxisMetadataDetectionArray, queue_size=10)
+        # Detection publisher is created lazily only after metadata configure is accepted.
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.focus_service = rospy.Service('~set_focus', SetCameraFocus, self.setFocusService)
