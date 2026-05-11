@@ -853,6 +853,52 @@ class ControlAxis():
 
         return result
 
+    def setDCIrisPosition(self, iris_percentage):
+        if iris_percentage < 0.0 or iris_percentage > 100.0:
+            return {
+                'success': False,
+                'message': 'iris percentage %.1f is out of range [0, 100]' % iris_percentage
+            }
+
+        # Manual position is ignored on some cameras while DCIris auto mode is enabled.
+        disable_auto_result = self.setDCIrisEnabled(False)
+        if not disable_auto_result.get('success', False):
+            return {
+                'success': False,
+                'message': 'failed to disable DCIris auto mode: %s' % disable_auto_result.get('message', 'unknown error')
+            }
+
+        parameter_path = 'ImageSource.I0.DCIris.Position'
+        dciris_position = int(round(iris_percentage))
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_via_param_cgi(parameter_path, dciris_position, 'iris')
+        return self._verify_and_rollback_parameter_update(
+            parameter_path,
+            dciris_position,
+            previous_value,
+            result,
+            'iris'
+        )
+
+    def setDCIrisEnabled(self, enabled):
+        parameter_path = 'ImageSource.I0.DCIris.Enabled'
+        enabled_value = 'yes' if enabled else 'no'
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_via_param_cgi(parameter_path, enabled_value, 'autoiris')
+        return self._verify_and_rollback_parameter_update(
+            parameter_path,
+            enabled_value,
+            previous_value,
+            result,
+            'autoiris'
+        )
+
+    def getDCIrisEnabledState(self):
+        enabled_value = self._read_parameter_value('ImageSource.I0.DCIris.Enabled')
+        if enabled_value is None:
+            return None
+        return enabled_value.strip().lower() == 'yes'
+
     def getWhiteBalanceModes(self):
         parameter_path, error_message = self._get_white_balance_parameter_path()
         if parameter_path is None:

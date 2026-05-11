@@ -213,6 +213,23 @@ class AxisPTZ(threading.Thread):
     def _irisPercentageToRaw(self, iris_percentage):
         clamped_percentage = min(max(iris_percentage, 0.0), 100.0)
         return self.iris_min_value + ((self.iris_max_value - self.iris_min_value) * (clamped_percentage / 100.0))
+
+    def _shouldTryDCIrisFallback(self, requested_iris_percent):
+        ptz_read = self.controller.getPTZState()
+        if ptz_read.get("error_reading", True):
+            return False
+
+        if ptz_read.get("autoiris", False):
+            return True
+
+        actual_iris_percent = self._irisRawToPercentage(ptz_read.get("iris", self.iris_min_value))
+        return abs(actual_iris_percent - requested_iris_percent) > 5.0
+
+    def _shouldTryDCIrisAutoFallback(self):
+        dciris_enabled = self.controller.getDCIrisEnabledState()
+        if dciris_enabled is not None:
+            return not dciris_enabled
+        return True
     
     def _updateEffectiveFocusFromCommand(self, commanded_focus_percent, actual_focus_percent, autofocus_enabled):
         """
@@ -608,16 +625,62 @@ class AxisPTZ(threading.Thread):
             self.controller.sendPTZCommand(autoiris=False)
         control = self.controller.sendPTZCommand(iris=iris_value, autoiris=req.auto)
         if not self._commandSucceeded(control, 'iris'):
+            if req.auto:
+                fallback_result = self.controller.setDCIrisEnabled(True)
+                if fallback_result.get('success', False):
+                    self.desired_autoiris = True
+                    response.ret = True
+                    response.message = 'Autoiris enabled through DCIris fallback'
+                    return response
+
+            if not req.auto:
+                fallback_result = self.controller.setDCIrisPosition(req.value)
+                if fallback_result.get('success', False):
+                    self.desired_autoiris = False
+                    self.desired_iris = req.value
+                    response.ret = True
+                    response.message = 'Iris command sent through DCIris fallback'
+                    return response
+
             response.ret = False
-            response.message = self._formatCommandError(control, 'iris')
+            if not req.auto:
+                response.message = 'PTZ iris failed (%s); DCIris fallback failed (%s)' % (
+                    self._formatCommandError(control, 'iris'),
+                    fallback_result.get('message', 'unknown error')
+                )
+            else:
+                response.message = 'PTZ autoiris failed (%s); DCIris fallback failed (%s)' % (
+                    self._formatCommandError(control, 'iris'),
+                    fallback_result.get('message', 'unknown error')
+                )
             return response
+
+        if not req.auto and self._shouldTryDCIrisFallback(req.value):
+            fallback_result = self.controller.setDCIrisPosition(req.value)
+            if fallback_result.get('success', False):
+                self.desired_autoiris = False
+                self.desired_iris = req.value
+                response.ret = True
+                response.message = 'Iris command sent through DCIris fallback after PTZ readback mismatch'
+                return response
+
+        if req.auto and self._shouldTryDCIrisAutoFallback():
+            fallback_result = self.controller.setDCIrisEnabled(True)
+            if fallback_result.get('success', False):
+                self.desired_autoiris = True
+                response.ret = True
+                response.message = 'Autoiris enabled through DCIris fallback after PTZ readback mismatch'
+                return response
 
         self.desired_autoiris = req.auto
         if iris_value is not None:
             self.desired_iris = req.value  # store as percentage
 
         response.ret = True
-        response.message = 'Iris command sent'
+        if req.auto:
+            response.message = 'Autoiris command sent through PTZ'
+        else:
+            response.message = 'Iris command sent'
         return response
 
     def _commandSucceeded(self, control, feature_name):
