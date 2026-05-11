@@ -252,7 +252,6 @@ class AxisPTZ(threading.Thread):
         # Advertise only after metadata stream is confirmed.
         # This keeps ~detectors/status hidden on cameras without metadata support.
         self.detection_pub = rospy.Publisher("~detectors/status", AxisMetadataDetectionArray, queue_size=10)
-        rospy.loginfo('%s: metadata detections topic enabled (~detectors/status)', rospy.get_name())
 
     def _publishDetectionObservations(self, observations):
         if self.detection_pub is None:
@@ -302,7 +301,6 @@ class AxisPTZ(threading.Thread):
         self._detection_ws_unsupported = False
         rospy.loginfo('%s: metadata stream connected to %s', rospy.get_name(), self._detection_ws_url)
         ws.send(json.dumps(self._buildDetectionConfigurePayload()))
-        rospy.loginfo('%s: metadata configure sent with channelFilter=%s', rospy.get_name(), self.detection_channel_filter)
 
     def _onDetectionMessage(self, ws, msg):
         try:
@@ -318,7 +316,6 @@ class AxisPTZ(threading.Thread):
         method = obj.get('method')
         if method == '%s:configure' % self.detection_ws_source:
             self._ensureDetectionPublisher()
-            rospy.loginfo('%s: metadata configure accepted', rospy.get_name())
             return
 
         observations = self._extractDetectionObservations(obj)
