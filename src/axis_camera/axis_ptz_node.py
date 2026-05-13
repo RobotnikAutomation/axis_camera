@@ -298,6 +298,7 @@ class AxisPTZ(threading.Thread):
         self.set_day_night_shift_level_service = rospy.Service('~set_day_night_shift_level', SetInt16, self.setDayNightShiftLevelServiceCb)
         self.set_white_balance_service = rospy.Service('~set_white_balance', SetString, self.setWhiteBalanceServiceCb)
         self.get_white_balance_mode_service = rospy.Service('~get_white_balance_mode', GetStringList, self.getWhiteBalanceModeServiceCb)
+        self.get_day_night_mode_service = rospy.Service('~get_day_night_mode', GetStringList, self.getDayNightModeServiceCb)
         self.get_image_settings_service = rospy.Service('~get_image_settings', GetImageSettings, self.getImageSettingsServiceCb)
         self.loadDeviceInfo()
         self.device_info_service = rospy.Service('~get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
@@ -494,6 +495,17 @@ class AxisPTZ(threading.Thread):
             rospy.loginfo('%s:getWhiteBalanceModeServiceCb: %s', rospy.get_name(), result['message'])
         else:
             rospy.logerr('%s:getWhiteBalanceModeServiceCb: %s', rospy.get_name(), result['message'])
+        return GetStringListResponse(
+            strings=result['modes'],
+            ret=ReturnMessage(success=result['success'], message=result['message'])
+        )
+
+    def getDayNightModeServiceCb(self, req):
+        result = self.controller.getDayNightModes()
+        if result['success']:
+            rospy.loginfo('%s:getDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:getDayNightModeServiceCb: %s', rospy.get_name(), result['message'])
         return GetStringListResponse(
             strings=result['modes'],
             ret=ReturnMessage(success=result['success'], message=result['message'])

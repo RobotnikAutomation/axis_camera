@@ -928,6 +928,54 @@ class ControlAxis():
             'modes': modes
         }
 
+    def getDayNightModes(self):
+        parameter_path, error_message = self._get_day_night_parameter_path()
+        if parameter_path is None:
+            return {
+                'success': False,
+                'message': error_message,
+                'modes': []
+            }
+
+        enum_modes = None
+        parts = parameter_path.rsplit('.', 1)
+        if len(parts) == 2:
+            enum_modes = self._get_parameter_enum_values_from_definitions(parts[0], parts[1])
+
+        supported_modes, error_message = self._get_supported_day_night_modes(parameter_path)
+        if supported_modes is None:
+            return {
+                'success': False,
+                'message': error_message,
+                'modes': []
+            }
+
+        # Normalize and present user-friendly aliases.
+        source_modes = set(m.lower() for m in enum_modes) if enum_modes else set(m.lower() for m in supported_modes)
+
+        # Map firmware boolean-style modes to friendly canonical names.
+        canonical = set()
+        for m in source_modes:
+            if m == 'yes':
+                canonical.add('day')
+            elif m == 'no':
+                canonical.add('night')
+            else:
+                canonical.add(m)
+
+        # Preferred ordering: auto, day, night
+        preferred = ['auto', 'day', 'night']
+        ordered = [p for p in preferred if p in canonical]
+        # Append any remaining modes sorted for determinism
+        remaining = sorted(canonical.difference(ordered))
+        modes = ordered + remaining
+
+        return {
+            'success': True,
+            'message': 'day_night modes retrieved',
+            'modes': modes
+        }
+
     def setWhiteBalance(self, white_balance):
         white_balance = white_balance.strip()
         if not white_balance:
