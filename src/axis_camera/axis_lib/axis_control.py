@@ -26,9 +26,9 @@ class ControlAxis():
         self._password = password
         self._sensor_parameter_names = None
         self._white_balance_parameter_path = None
-        self._white_balance_supported_modes = None
+        self._white_balance_supported_modes = {}
         self._day_night_parameter_path = None
-        self._day_night_supported_modes = None
+        self._day_night_supported_modes = {}
         self._parameter_int_ranges = {}
         self._parameter_enum_values = {}
         self._last_known_image_settings = {
@@ -52,9 +52,20 @@ class ControlAxis():
                 'listformat': 'xmlschema',
                 'group': group
             })
-            url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-            response = opener.open(url, timeout=5)
-            xml_text = response.read().decode('utf-8', errors='replace')
+            xml_text = None
+            for cgi_path in ('/axis-cgi/admin/param.cgi', '/axis-cgi/param.cgi'):
+                try:
+                    url = 'http://%s%s?%s' % (self.hostname, cgi_path, params)
+                    response = opener.open(url, timeout=5)
+                    candidate = response.read().decode('utf-8', errors='replace')
+                    if candidate and not candidate.lstrip().startswith('# Error'):
+                        xml_text = candidate
+                        break
+                except Exception:
+                    continue
+            if xml_text is None:
+                self._parameter_int_ranges[cache_key] = (None, None)
+                return (None, None)
             root = ET.fromstring(xml_text)
             ns = {'ax': 'http://www.axis.com/ParameterDefinitionsSchema'}
 
@@ -94,9 +105,20 @@ class ControlAxis():
                 'listformat': 'xmlschema',
                 'group': group
             })
-            url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-            response = opener.open(url, timeout=5)
-            xml_text = response.read().decode('utf-8', errors='replace')
+            xml_text = None
+            for cgi_path in ('/axis-cgi/admin/param.cgi', '/axis-cgi/param.cgi'):
+                try:
+                    url = 'http://%s%s?%s' % (self.hostname, cgi_path, params)
+                    response = opener.open(url, timeout=5)
+                    candidate = response.read().decode('utf-8', errors='replace')
+                    if candidate and not candidate.lstrip().startswith('# Error'):
+                        xml_text = candidate
+                        break
+                except Exception:
+                    continue
+            if xml_text is None:
+                self._parameter_enum_values[cache_key] = None
+                return None
             root = ET.fromstring(xml_text)
             ns = {'ax': 'http://www.axis.com/ParameterDefinitionsSchema'}
 
@@ -178,9 +200,19 @@ class ControlAxis():
             'action': 'list',
             'group': 'ImageSource.I0.Sensor'
         })
-        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-        response = opener.open(url, timeout=5)
-        body = response.read().decode('utf-8').splitlines()
+        body = None
+        for cgi_path in ('/axis-cgi/admin/param.cgi', '/axis-cgi/param.cgi'):
+            try:
+                url = 'http://%s%s?%s' % (self.hostname, cgi_path, params)
+                response = opener.open(url, timeout=5)
+                lines = response.read().decode('utf-8').splitlines()
+                if lines and not lines[0].startswith('# Error'):
+                    body = lines
+                    break
+            except Exception:
+                continue
+        if body is None:
+            body = []
 
         parameter_names = set()
         for line in body:
@@ -293,9 +325,20 @@ class ControlAxis():
             'action': 'list',
             'group': group
         })
-        url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-        response = opener.open(url, timeout=5)
-        return response.read().decode('utf-8').splitlines()
+        last_exc = None
+        for cgi_path in ('/axis-cgi/admin/param.cgi', '/axis-cgi/param.cgi'):
+            try:
+                url = 'http://%s%s?%s' % (self.hostname, cgi_path, params)
+                response = opener.open(url, timeout=5)
+                lines = response.read().decode('utf-8').splitlines()
+                if not lines or not lines[0].startswith('# Error'):
+                    return lines
+            except Exception as e:
+                last_exc = e
+                continue
+        if last_exc is not None:
+            raise last_exc
+        return []
 
     def _group_exists(self, group):
         try:
@@ -313,26 +356,24 @@ class ControlAxis():
         return True
 
     def _read_parameter_value(self, parameter_path):
-        """Read a single parameter value from VAPIX. Returns the value or None if not found."""
         try:
             opener = self._get_digest_opener()
             params = urllib_parse.urlencode({
                 'action': 'list',
                 'group': parameter_path
             })
-            url = 'http://%s/axis-cgi/admin/param.cgi?%s' % (self.hostname, params)
-            response = opener.open(url, timeout=5)
-            body = response.read().decode('utf-8').strip()
-            
-            if not body or body.startswith('# Error'):
-                return None
-            
-            # If returns a single line with the parameter
-            lines = body.splitlines()
-            for line in lines:
-                if '=' in line and not line.startswith('#'):
-                    value = line.split('=', 1)[1].strip()
-                    return value
+            for cgi_path in ('/axis-cgi/admin/param.cgi', '/axis-cgi/param.cgi'):
+                try:
+                    url = 'http://%s%s?%s' % (self.hostname, cgi_path, params)
+                    response = opener.open(url, timeout=5)
+                    body = response.read().decode('utf-8').strip()
+                    if not body or body.startswith('# Error'):
+                        continue
+                    for line in body.splitlines():
+                        if '=' in line and not line.startswith('#'):
+                            return line.split('=', 1)[1].strip()
+                except Exception:
+                    continue
             return None
         except Exception:
             return None
@@ -400,52 +441,63 @@ class ControlAxis():
         if self._day_night_parameter_path is not None:
             return self._day_night_parameter_path, ''
 
-        # Try the parameter specified in the VAPIX task first
-        if self._group_exists('ImageSource.I0.DayNight.DayNightShift'):
+        # Prefer IrCutFilter when readable; this is the endpoint used by many modern firmwares.
+        ir_cut_value = self._read_parameter_value('ImageSource.I0.DayNight.IrCutFilter')
+        if ir_cut_value is not None:
+            self._day_night_parameter_path = 'ImageSource.I0.DayNight.IrCutFilter'
+            return self._day_night_parameter_path, ''
+
+        # Fall back to DayNightShift if available.
+        day_night_shift_value = self._read_parameter_value('ImageSource.I0.DayNight.DayNightShift')
+        if day_night_shift_value is not None:
             self._day_night_parameter_path = 'ImageSource.I0.DayNight.DayNightShift'
             return self._day_night_parameter_path, ''
 
-        # Fall back to IrCutFilter (used on some firmware versions)
+        # Last-resort checks when reads are unavailable.
         if self._group_exists('ImageSource.I0.DayNight.IrCutFilter'):
             self._day_night_parameter_path = 'ImageSource.I0.DayNight.IrCutFilter'
+            return self._day_night_parameter_path, ''
+
+        if self._group_exists('ImageSource.I0.DayNight.DayNightShift'):
+            self._day_night_parameter_path = 'ImageSource.I0.DayNight.DayNightShift'
             return self._day_night_parameter_path, ''
 
         return None, 'camera does not expose a supported day/night parameter'
 
     def _get_supported_white_balance_modes(self, parameter_path):
-        if self._white_balance_supported_modes is not None:
-            return self._white_balance_supported_modes, ''
+        if parameter_path in self._white_balance_supported_modes:
+            return self._white_balance_supported_modes[parameter_path], ''
 
         parts = parameter_path.rsplit('.', 1)
         if len(parts) == 2:
             group, parameter_name = parts
             modes = self._get_parameter_enum_values_from_definitions(group, parameter_name)
             if modes:
-                self._white_balance_supported_modes = modes
-                return self._white_balance_supported_modes, ''
+                self._white_balance_supported_modes[parameter_path] = modes
+                return self._white_balance_supported_modes[parameter_path], ''
 
         # Fallback if XML definitions are unavailable
-        self._white_balance_supported_modes = set(['auto', 'fixed_indoor', 'fixed_outdoor', 'hold'])
-        return self._white_balance_supported_modes, ''
+        self._white_balance_supported_modes[parameter_path] = set(['auto', 'fixed_indoor', 'fixed_outdoor', 'hold'])
+        return self._white_balance_supported_modes[parameter_path], ''
 
     def _get_supported_day_night_modes(self, parameter_path):
-        if self._day_night_supported_modes is not None:
-            return self._day_night_supported_modes, ''
+        if parameter_path in self._day_night_supported_modes:
+            return self._day_night_supported_modes[parameter_path], ''
 
         parts = parameter_path.rsplit('.', 1)
         if len(parts) == 2:
             group, parameter_name = parts
             modes = self._get_parameter_enum_values_from_definitions(group, parameter_name)
             if modes:
-                self._day_night_supported_modes = modes
-                return self._day_night_supported_modes, ''
+                self._day_night_supported_modes[parameter_path] = modes
+                return self._day_night_supported_modes[parameter_path], ''
 
         # Fallback if XML definitions are unavailable
         if 'DayNightShift' in parameter_path:
-            self._day_night_supported_modes = set(['auto', 'day', 'night'])
+            self._day_night_supported_modes[parameter_path] = set(['auto', 'day', 'night'])
         else:  # IrCutFilter
-            self._day_night_supported_modes = set(['auto', 'yes', 'no'])
-        return self._day_night_supported_modes, ''
+            self._day_night_supported_modes[parameter_path] = set(['auto', 'yes', 'no'])
+        return self._day_night_supported_modes[parameter_path], ''
 
     def _supports_day_night_mode(self):
         try:
@@ -463,6 +515,39 @@ class ControlAxis():
                 return value == 'yes', ''
 
         return True, ''
+
+    def _update_via_param_cgi(self, parameter_path, value, success_label):
+        """Update a parameter using /axis-cgi/param.cgi with the root. prefix (VAPIX v2 style)."""
+        ret = {
+            'success': False,
+            'message': ''
+        }
+
+        params = urllib_parse.urlencode({
+            'action': 'update',
+            'root.' + parameter_path: value
+        })
+        url = 'http://%s/axis-cgi/param.cgi?%s' % (self.hostname, params)
+
+        try:
+            opener = self._get_digest_opener()
+            response = opener.open(url, timeout=5)
+            body = response.read().decode('utf-8').strip()
+
+            if body == 'OK':
+                ret['success'] = True
+                ret['message'] = '%s set to %s' % (success_label, value)
+            else:
+                ret['message'] = 'camera rejected update (param.cgi): %s' % body
+
+        except urllib_error.HTTPError as e:
+            ret['message'] = 'HTTP error %d: %s' % (e.code, e.reason)
+        except urllib_error.URLError as e:
+            ret['message'] = 'connection error: %s' % e.reason
+        except socket.timeout:
+            ret['message'] = 'connection timeout'
+
+        return ret
 
     def _update_parameter_path(self, parameter_path, value, success_label):
         ret = {
@@ -768,6 +853,52 @@ class ControlAxis():
 
         return result
 
+    def setDCIrisPosition(self, iris_percentage):
+        if iris_percentage < 0.0 or iris_percentage > 100.0:
+            return {
+                'success': False,
+                'message': 'iris percentage %.1f is out of range [0, 100]' % iris_percentage
+            }
+
+        # Manual position is ignored on some cameras while DCIris auto mode is enabled.
+        disable_auto_result = self.setDCIrisEnabled(False)
+        if not disable_auto_result.get('success', False):
+            return {
+                'success': False,
+                'message': 'failed to disable DCIris auto mode: %s' % disable_auto_result.get('message', 'unknown error')
+            }
+
+        parameter_path = 'ImageSource.I0.DCIris.Position'
+        dciris_position = int(round(iris_percentage))
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_via_param_cgi(parameter_path, dciris_position, 'iris')
+        return self._verify_and_rollback_parameter_update(
+            parameter_path,
+            dciris_position,
+            previous_value,
+            result,
+            'iris'
+        )
+
+    def setDCIrisEnabled(self, enabled):
+        parameter_path = 'ImageSource.I0.DCIris.Enabled'
+        enabled_value = 'yes' if enabled else 'no'
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_via_param_cgi(parameter_path, enabled_value, 'autoiris')
+        return self._verify_and_rollback_parameter_update(
+            parameter_path,
+            enabled_value,
+            previous_value,
+            result,
+            'autoiris'
+        )
+
+    def getDCIrisEnabledState(self):
+        enabled_value = self._read_parameter_value('ImageSource.I0.DCIris.Enabled')
+        if enabled_value is None:
+            return None
+        return enabled_value.strip().lower() == 'yes'
+
     def getWhiteBalanceModes(self):
         parameter_path, error_message = self._get_white_balance_parameter_path()
         if parameter_path is None:
@@ -794,6 +925,54 @@ class ControlAxis():
         return {
             'success': True,
             'message': 'white_balance modes retrieved',
+            'modes': modes
+        }
+
+    def getDayNightModes(self):
+        parameter_path, error_message = self._get_day_night_parameter_path()
+        if parameter_path is None:
+            return {
+                'success': False,
+                'message': error_message,
+                'modes': []
+            }
+
+        enum_modes = None
+        parts = parameter_path.rsplit('.', 1)
+        if len(parts) == 2:
+            enum_modes = self._get_parameter_enum_values_from_definitions(parts[0], parts[1])
+
+        supported_modes, error_message = self._get_supported_day_night_modes(parameter_path)
+        if supported_modes is None:
+            return {
+                'success': False,
+                'message': error_message,
+                'modes': []
+            }
+
+        # Normalize and present user-friendly aliases.
+        source_modes = set(m.lower() for m in enum_modes) if enum_modes else set(m.lower() for m in supported_modes)
+
+        # Map firmware boolean-style modes to friendly canonical names.
+        canonical = set()
+        for m in source_modes:
+            if m == 'yes':
+                canonical.add('day')
+            elif m == 'no':
+                canonical.add('night')
+            else:
+                canonical.add(m)
+
+        # Preferred ordering: auto, day, night
+        preferred = ['auto', 'day', 'night']
+        ordered = [p for p in preferred if p in canonical]
+        # Append any remaining modes sorted for determinism
+        remaining = sorted(canonical.difference(ordered))
+        modes = ordered + remaining
+
+        return {
+            'success': True,
+            'message': 'day_night modes retrieved',
             'modes': modes
         }
 
@@ -843,6 +1022,9 @@ class ControlAxis():
             }
 
         result = self._update_parameter_path(parameter_path, white_balance, 'white_balance')
+        if not result['success']:
+            # Fall back to /axis-cgi/param.cgi with root. prefix (VAPIX v2 style)
+            result = self._update_via_param_cgi(parameter_path, white_balance, 'white_balance')
         if result['success']:
             self._last_known_image_settings['white_balance'] = white_balance
         return result
@@ -856,14 +1038,14 @@ class ControlAxis():
                 'success': False,
                 'message': error_message
             }
-        if not supports_day_night:
-            return {
-                'success': False,
-                'message': 'camera does not support manual day/night mode control'
-            }
 
         parameter_path, error_message = self._get_day_night_parameter_path()
         if parameter_path is None:
+            if not supports_day_night:
+                return {
+                    'success': False,
+                    'message': 'camera does not support manual day/night mode control'
+                }
             return {
                 'success': False,
                 'message': error_message
@@ -894,6 +1076,9 @@ class ControlAxis():
             }
 
         result = self._update_parameter_path(parameter_path, vapix_mode, 'day_night_mode')
+        if not result['success']:
+            # Fall back to /axis-cgi/param.cgi with root. prefix (VAPIX v2 style)
+            result = self._update_via_param_cgi(parameter_path, vapix_mode, 'day_night_mode')
         if result['success']:
             if 'DayNightShift' in parameter_path:
                 if vapix_mode == 'night':
@@ -908,6 +1093,7 @@ class ControlAxis():
         return result
 
     def setDayNightShiftLevel(self, shift_level):
+        parameter_path = 'ImageSource.I0.DayNight.ShiftLevel'
         shift_range = self._get_parameter_int_range_from_definitions('ImageSource.I0.DayNight', 'ShiftLevel')
         if shift_range[0] is not None:
             min_shift, max_shift = shift_range
@@ -920,7 +1106,18 @@ class ControlAxis():
                 'message': 'shift_level value %d is out of range [%d, %d]' % (shift_level, min_shift, max_shift)
             }
 
-        result = self._update_parameter_path_verified('ImageSource.I0.DayNight.ShiftLevel', shift_level, 'day_night_shift_level')
+        previous_value = self._read_parameter_value(parameter_path)
+        result = self._update_parameter_path(parameter_path, shift_level, 'day_night_shift_level')
+        if not result['success']:
+            # Fall back to /axis-cgi/param.cgi with root. prefix (VAPIX v2 style)
+            result = self._update_via_param_cgi(parameter_path, shift_level, 'day_night_shift_level')
+        result = self._verify_and_rollback_parameter_update(
+            parameter_path,
+            shift_level,
+            previous_value,
+            result,
+            'day_night_shift_level'
+        )
         if result['success']:
             self._last_known_image_settings['day_night_shift_level'] = shift_level
         return result
