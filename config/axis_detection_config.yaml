@@ -1,0 +1,14 @@
+hostname: 192.168.0.187
+detection_enabled: true
+detection_use_tls: false
+detection_ws_source: analytics-scene-description
+detection_channel_filter:
+  - '1'
+  - '2'
+  - '3'
+  - '4'
+enable_auth: true
+username: hmi
+password: '4x1s_360'
+frame_id: axis_camera
+rate: 2.0

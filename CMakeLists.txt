@@ -51,6 +51,9 @@ catkin_install_python(PROGRAMS src/axis_camera/__init__.py
 
 catkin_install_python(PROGRAMS src/axis_camera/axis_ptz_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+catkin_install_python(PROGRAMS src/axis_camera/axis_detection_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   
 catkin_install_python(PROGRAMS src/axis_camera/axis_stream_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
@@ -68,5 +71,9 @@ install(
   DIRECTORY launch config data
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_nosetests(test)
+endif()
 
 

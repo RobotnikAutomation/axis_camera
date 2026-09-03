@@ -34,12 +34,9 @@
 
 import threading
 import math
-import json
-import ssl
 
 import rospy
 
-from std_msgs.msg import Header
 from std_srvs.srv import Empty
 from sensor_msgs.msg import JointState
 
@@ -48,7 +45,6 @@ from robotnik_msgs.msg import ptz
 from robotnik_msgs.msg import CameraParameters
 from robotnik_msgs.msg import ImageSettings
 from robotnik_msgs.msg import ReturnMessage
-from robotnik_msgs.msg import AxisMetadataDetection, AxisMetadataDetectionArray
 from robotnik_msgs.srv import SetCameraFocus, SetCameraFocusResponse
 from robotnik_msgs.srv import SetCameraIris, SetCameraIrisResponse
 from robotnik_msgs.srv import GetAxisDeviceInfo, GetAxisDeviceInfoResponse
@@ -61,11 +57,6 @@ from robotnik_msgs.srv import SetInt16, SetInt16Response
 from robotnik_msgs.srv import SetString, SetStringResponse
 from robotnik_msgs.srv import GetStringList, GetStringListResponse
 from robotnik_msgs.srv import GetImageSettings, GetImageSettingsResponse
-
-try:
-    import websocket
-except ImportError:
-    websocket = None
 
 class AxisPTZ(threading.Thread):
     """
@@ -177,215 +168,7 @@ class AxisPTZ(threading.Thread):
         self.image_settings_error_active = False
         self.last_image_settings_error_message = ''
 
-        self.detection_enabled = args.get('detection_enabled', True)
-        self.detection_use_tls = bool(args.get('detection_use_tls', False))
-        self.detection_ws_source = args.get('detection_ws_source', 'analytics-scene-description')
-        self.detection_channel_filter = self._normalizeDetectionChannelFilter(args.get('detection_channel_filter', ['1']))
-        self.detection_pub = None
-        self._detection_stop = threading.Event()
-        self._detection_thread = None
-        self._detection_ws = None
-        self._detection_ws_unsupported = False
-
-        scheme = 'wss' if self.detection_use_tls else 'ws'
-        self._detection_ws_url = '%s://%s/vapix/ws-data-stream?sources=%s' % (
-            scheme,
-            self.hostname,
-            self.detection_ws_source
-        )
-
         self._readPTZLimitsFromCamera()
-
-    def _normalizeDetectionChannelFilter(self, raw_filter):
-        if isinstance(raw_filter, str):
-            raw_filter = [raw_filter]
-        if not isinstance(raw_filter, list) or len(raw_filter) == 0:
-            raw_filter = ['1']
-        return [str(ch) for ch in raw_filter]
-
-    def _buildDetectionConfigurePayload(self):
-        return {
-            'apiVersion': '1.0',
-            'method': '%s:configure' % self.detection_ws_source,
-            'params': {
-                'channelFilter': self.detection_channel_filter,
-            }
-        }
-
-    def _extractDetectionObservations(self, msg_obj):
-        try:
-            return msg_obj['params']['notification']['message']['data']['frame']['observations']
-        except Exception:
-            return None
-
-    def _extractRawDetectionClassLabel(self, obs):
-        cls_obj = obs.get('class', {})
-        if isinstance(cls_obj, dict):
-            for key in ('type', 'label', 'name', 'object'):
-                value = cls_obj.get(key)
-                if value is not None and str(value).strip() != '':
-                    return str(value)
-        elif cls_obj is not None and str(cls_obj).strip() != '':
-            return str(cls_obj)
-        return ''
-
-    def _normalizeDetectionClassLabel(self, raw_label):
-        label = str(raw_label or '').strip().lower().replace('-', '_').replace(' ', '_')
-
-        human_labels = {
-            'human', 'person', 'pedestrian', 'people', 'man', 'woman'
-        }
-        vehicle_labels = {
-            'vehicle', 'car', 'truck', 'bus', 'van', 'motorcycle', 'motorbike', 'bike', 'bicycle'
-        }
-
-        if label in human_labels:
-            return 'human'
-        if label in vehicle_labels:
-            return 'vehicle'
-        return 'unknown'
-
-    def _ensureDetectionPublisher(self):
-        if self.detection_pub is not None:
-            return
-
-        # Advertise only after metadata stream is confirmed.
-        # This keeps ~detectors/status hidden on cameras without metadata support.
-        self.detection_pub = rospy.Publisher("~detectors/status", AxisMetadataDetectionArray, queue_size=10)
-
-    def _publishDetectionObservations(self, observations):
-        if self.detection_pub is None:
-            return
-
-        out = AxisMetadataDetectionArray()
-        out.header = Header(stamp=rospy.Time.now(), frame_id='axis_camera')
-
-        for obs in observations:
-            if not isinstance(obs, dict):
-                continue
-
-            bbox = obs.get('bounding_box', {})
-            if not isinstance(bbox, dict):
-                continue
-
-            left = bbox.get('left')
-            top = bbox.get('top')
-            right = bbox.get('right')
-            bottom = bbox.get('bottom')
-            if None in (left, top, right, bottom):
-                continue
-
-            cls_obj = obs.get('class', {})
-            if not isinstance(cls_obj, dict):
-                cls_obj = {}
-
-            raw_class_label = self._extractRawDetectionClassLabel(obs)
-
-            det = AxisMetadataDetection()
-            det.header = out.header
-            det.track_id = str(obs.get('track_id', ''))
-            det.class_label = self._normalizeDetectionClassLabel(raw_class_label)
-            if det.class_label not in ('human', 'vehicle'):
-                continue
-            det.score = float(cls_obj.get('score', 0.0) or 0.0)
-            det.left = float(left)
-            det.top = float(top)
-            det.right = float(right)
-            det.bottom = float(bottom)
-            out.detections.append(det)
-
-        if out.detections:
-            self.detection_pub.publish(out)
-
-    def _onDetectionOpen(self, ws):
-        self._detection_ws_unsupported = False
-        rospy.loginfo('%s: metadata stream connected to %s', rospy.get_name(), self._detection_ws_url)
-        ws.send(json.dumps(self._buildDetectionConfigurePayload()))
-
-    def _onDetectionMessage(self, ws, msg):
-        try:
-            obj = json.loads(msg)
-        except Exception:
-            return
-
-        error = obj.get('error')
-        if isinstance(error, dict):
-            rospy.logwarn_throttle(10, '%s: metadata ws error: %s', rospy.get_name(), error)
-            return
-
-        method = obj.get('method')
-        if method == '%s:configure' % self.detection_ws_source:
-            self._ensureDetectionPublisher()
-            return
-
-        observations = self._extractDetectionObservations(obj)
-        if isinstance(observations, list):
-            self._publishDetectionObservations(observations)
-
-    def _onDetectionError(self, ws, err):
-        err_str = str(err)
-        if '404' in err_str or 'Not Found' in err_str:
-            if not self._detection_ws_unsupported:
-                rospy.loginfo('%s: camera does not support analytics metadata endpoint -- detection disabled', rospy.get_name())
-                self._detection_ws_unsupported = True
-                self._detection_stop.set()
-        else:
-            rospy.logwarn_throttle(5, '%s: metadata ws error: %s', rospy.get_name(), err)
-
-    def _onDetectionClose(self, ws, code, reason):
-        if rospy.is_shutdown() or self._detection_stop.is_set():
-            return
-        if not self._detection_ws_unsupported:
-            rospy.logwarn('%s: metadata ws closed (%s, %s)', rospy.get_name(), code, reason)
-
-    def _detectionSpin(self):
-        while not rospy.is_shutdown() and not self._detection_stop.is_set():
-            self._detection_ws = websocket.WebSocketApp(
-                self._detection_ws_url,
-                on_open=self._onDetectionOpen,
-                on_message=self._onDetectionMessage,
-                on_error=self._onDetectionError,
-                on_close=self._onDetectionClose,
-            )
-            try:
-                if self.detection_use_tls:
-                    self._detection_ws.run_forever(
-                        sslopt={'cert_reqs': ssl.CERT_NONE},
-                        ping_interval=20,
-                        ping_timeout=10,
-                    )
-                else:
-                    self._detection_ws.run_forever(ping_interval=20, ping_timeout=10)
-            except Exception as exc:
-                rospy.logwarn('%s: metadata ws exception: %s', rospy.get_name(), exc)
-
-            if rospy.is_shutdown() or self._detection_stop.is_set():
-                break
-
-            rospy.sleep(2.0)
-
-    def _startDetectionStream(self):
-        if not self.detection_enabled:
-            rospy.loginfo('%s: metadata stream disabled by parameter ~detection_enabled', rospy.get_name())
-            return
-        if websocket is None:
-            rospy.logwarn('%s: metadata stream disabled (python websocket-client not installed)', rospy.get_name())
-            return
-        if self._detection_thread is not None:
-            return
-
-        self._detection_stop.clear()
-        self._detection_thread = threading.Thread(target=self._detectionSpin)
-        self._detection_thread.daemon = True
-        self._detection_thread.start()
-
-    def _stopDetectionStream(self):
-        self._detection_stop.set()
-        try:
-            if self._detection_ws is not None:
-                self._detection_ws.close()
-        except Exception:
-            pass
 
     def _readPTZLimitsFromCamera(self):
         ptz_limits = self.controller.getPTZLimits()
@@ -487,7 +270,6 @@ class AxisPTZ(threading.Thread):
         self.zoom_parameter_pub = rospy.Publisher("~camera_parameters", CameraParameters, queue_size=10)
         # Publish image settings state (base + explicit current alias)
         self.image_settings_pub = rospy.Publisher("~image_settings", ImageSettings, queue_size=10)
-        # Detection publisher is created lazily only after metadata configure is accepted.
         # Services
         self.home_service = rospy.Service('~home_ptz', Empty, self.homeService)
         self.focus_service = rospy.Service('~set_focus', SetCameraFocus, self.setFocusService)
@@ -516,9 +298,6 @@ class AxisPTZ(threading.Thread):
 
         rospy.loginfo('%s: device info model=%s serial=%s firmware=%s' %
                       (rospy.get_name(), self.device_model, self.device_serial, self.device_firmware))
-
-        self._startDetectionStream()
-        rospy.on_shutdown(self._stopDetectionStream)
 
     def loadDeviceInfo(self):
         """Load device info using shared device_info module"""
@@ -1246,11 +1025,7 @@ def main():
         'pan_offset': 0.0,
         'tilt_offset': 0.0,
         'image_settings_pub_rate': 1.0,
-        'iris_two_step_control': False,
-        'detection_enabled': True,
-        'detection_use_tls': False,
-        'detection_ws_source': 'analytics-scene-description',
-        'detection_channel_filter': ['1']
+        'iris_two_step_control': False
     }
     args = {}
 

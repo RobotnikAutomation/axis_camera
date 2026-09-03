@@ -12,6 +12,7 @@ This driver is under active development. Its ROS interfaces are relatively stabl
 
 - `axis_node.py`: Version 2 of the axis.py node. Works based on profiles + params. It is necessary to have the profiles defined. Sets up axis camera and PTZ server.
 - `axis_ptz_node.py`: PTZ control node. Controls pan, tilt, zoom, focus and iris. See [PTZ node](#ptz-node) for full documentation.
+- `axis_detection_node.py`: Analytics metadata node. Connects to AXIS detection metadata and publishes object detections. See [Detection metadata node](#detection-metadata-node) for full documentation.
 - `axis_stream_node.py`: Image streaming node.
 
 ## Configuration
@@ -269,24 +270,34 @@ relative: false"
 
 ---
 
-## Detection metadata
+## Detection metadata node
 
-Detection is integrated in `axis_ptz_node.py`.
+`axis_detection_node.py` runs independently from `axis_ptz_node.py`.
 
 The node connects to Axis analytics scene metadata over WebSocket and publishes bounding-box detections.
 
-### Detection parameters (axis_ptz_node)
+Launch with:
+```
+roslaunch axis_camera axis_detection.launch ip_address:=<camera_ip>
+```
+
+Install the Python package `websocket-client` before running this node. It provides the `websocket.WebSocketApp` API used by the AXIS metadata client. If another package named `websocket` is installed, remove it first.
+
+### Detection parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `hostname` | string | `192.168.1.205` | Camera IP address or hostname |
 | `detection_enabled` | bool | `true` | Enable metadata detection stream |
 | `detection_use_tls` | bool | `false` | Use WSS instead of WS |
 | `detection_ws_source` | string | `analytics-scene-description` | VAPIX metadata source |
-| `detection_channel_filter` | string[] | `['1']` | Channel filter sent in configure payload |
+| `detection_channel_filter` | string[] | `['1']` | Camera channels requested from the AXIS metadata stream |
+| `frame_id` | string | `axis_camera` | Frame id used in published detection messages |
+| `rate` | float | `1.0` | Main node loop rate in Hz |
 
 ### Published topics
 
-* `~detectors/status` (`robotnik_msgs/AxisMetadataDetectionArray`) — detections for supported classes (`human` and `vehicle`).
+* `~detectors/<channel>/status` (`robotnik_msgs/AxisMetadataDetectionArray`) — detections for supported classes (`human` and `vehicle`) grouped by camera channel. For example, channel `1` is published on `~detectors/1/status`.
 
 Each item in `detections[]` is `robotnik_msgs/AxisMetadataDetection` with:
 * `track_id`
@@ -296,5 +307,6 @@ Each item in `detections[]` is `robotnik_msgs/AxisMetadataDetection` with:
 
 ### Runtime behaviour
 
-* The detection topic is advertised only after the camera accepts metadata stream configuration.
-* On cameras that do not support the metadata endpoint (HTTP 404), detection is disabled and `~detectors/status` is not advertised.
+* The detection topic is advertised by the detection node at startup.
+* `detection_channel_filter` is sent to the camera in the WebSocket configure payload. Use `['1', '2', '3']` to request metadata from multiple video channels.
+* On cameras that do not support the metadata endpoint (HTTP 404), detection is disabled and the node logs the unsupported endpoint without publishing detections.
