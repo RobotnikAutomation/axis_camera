@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+import threading
+
 import rospy
 
 from std_msgs.msg import Header
@@ -23,6 +25,8 @@ class AxisDetectionNode(object):
         self.frame_id = args['frame_id']
         self.rate = args['rate']
         self.detection_publishers = {}
+        self.pending_detections = {}
+        self.pending_detections_lock = threading.Lock()
 
         self.detection_client = AxisDetectionClient(
             hostname=self.hostname,
@@ -43,7 +47,7 @@ class AxisDetectionNode(object):
 
     def startDetection(self):
         self.detection_client.start(
-            on_detections=self.publishDetections,
+            on_detections=self.collectDetections,
             on_connected=self.onConnected,
             on_error=self.onError,
             on_unsupported=self.onUnsupported,
@@ -61,14 +65,22 @@ class AxisDetectionNode(object):
     def onUnsupported(self, url):
         rospy.loginfo('%s: camera does not support analytics metadata endpoint %s -- detection disabled', rospy.get_name(), url)
 
-    def publishDetections(self, detections):
-        detections_by_channel = {}
-        for detection in detections:
-            channel = str(detection.get('channel') or 'unknown')
-            detections_by_channel.setdefault(channel, []).append(detection)
+    def collectDetections(self, detections):
+        with self.pending_detections_lock:
+            for detection in detections:
+                channel = self._normalizeChannelName(detection.get('channel'))
+                self.pending_detections.setdefault(channel, []).append(detection)
 
-        for channel, channel_detections in detections_by_channel.items():
-            self.publishChannelDetections(channel, channel_detections)
+    def publishStatus(self):
+        with self.pending_detections_lock:
+            pending_detections = self.pending_detections
+            self.pending_detections = {}
+
+        for channel in pending_detections:
+            self._getDetectionPublisher(channel)
+
+        for channel in list(self.detection_publishers):
+            self.publishChannelDetections(channel, pending_detections.get(channel, []))
 
     def publishChannelDetections(self, channel, detections):
         msg = AxisMetadataDetectionArray()
@@ -86,8 +98,7 @@ class AxisDetectionNode(object):
             det.bottom = detection['bottom']
             msg.detections.append(det)
 
-        if msg.detections:
-            self._getDetectionPublisher(channel).publish(msg)
+        self._getDetectionPublisher(channel).publish(msg)
 
     def _getDetectionPublisher(self, channel):
         channel = self._normalizeChannelName(channel)
@@ -106,6 +117,7 @@ class AxisDetectionNode(object):
         self.startDetection()
         rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
+            self.publishStatus()
             rate.sleep()
 
 
