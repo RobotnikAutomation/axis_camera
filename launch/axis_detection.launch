@@ -2,9 +2,7 @@
 <launch>
     <arg name="node_name" default="axis_detection"/>
 
-    <arg name="config_file" default="$(find axis_camera)/config/axis_detection_config.yaml"/>
-
-    <!--rosparam file="$(arg config_file)" command="load"/-->
+    <arg name="config_file" default="$(find axis_camera)/config/axis_f2105re_detection_config.yaml"/>
 
 
     <node pkg="axis_camera" type="axis_detection_node.py" name="$(arg node_name)" output="screen" required="true">
