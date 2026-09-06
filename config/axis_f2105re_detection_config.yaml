@@ -12,3 +12,5 @@ username: hmi
 password: '4x1s_360'
 frame_id: axis_camera
 rate: 2.0
+person_detector_enabled: true
+vehicle_detector_enabled: true

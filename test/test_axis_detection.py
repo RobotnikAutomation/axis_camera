@@ -2,7 +2,12 @@
 
 import os
 import sys
+import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import rospy
 
 
 PACKAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -11,6 +16,7 @@ if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
 from axis_camera.axis_lib.axis_detection import AxisDetectionClient
+from axis_camera.axis_detection_node import AxisDetectionNode
 
 
 class AxisDetectionClientTest(unittest.TestCase):
@@ -150,6 +156,102 @@ class AxisDetectionClientTest(unittest.TestCase):
         self.assertIn('qop=auth', header)
         self.assertIn('nc=00000001', header)
         self.assertIn('response="', header)
+
+    def test_detector_names_and_class_mapping(self):
+        self.assertEqual(
+            ('person_detector', 'vehicle_detector'),
+            AxisDetectionNode.DETECTOR_NAMES)
+        self.assertEqual('person_detector', AxisDetectionNode.CLASS_TO_DETECTOR['human'])
+        self.assertEqual('vehicle_detector', AxisDetectionNode.CLASS_TO_DETECTOR['vehicle'])
+
+    def test_requested_detector_names(self):
+        self.assertEqual(
+            ['person_detector', 'vehicle_detector'],
+            AxisDetectionNode._requestedDetectorNames(
+                object.__new__(AxisDetectionNode), 'all'))
+        self.assertEqual(
+            ['person_detector'],
+            AxisDetectionNode._requestedDetectorNames(
+                object.__new__(AxisDetectionNode), 'person_detector'))
+        self.assertIsNone(
+            AxisDetectionNode._requestedDetectorNames(
+                object.__new__(AxisDetectionNode), 'unknown_detector'))
+
+    def test_activate_detector_callback_supports_single_and_all(self):
+        node = object.__new__(AxisDetectionNode)
+        node.detector_states = {
+            'person_detector': True,
+            'vehicle_detector': True,
+        }
+        node.detector_states_lock = threading.Lock()
+
+        response = node.activateDetectorCb(SimpleNamespace(
+            name='person_detector', active=False))
+        self.assertTrue(response.success)
+        self.assertFalse(node.detector_states['person_detector'])
+        self.assertTrue(node.detector_states['vehicle_detector'])
+
+        response = node.activateDetectorCb(SimpleNamespace(name='all', active=False))
+        self.assertTrue(response.success)
+        self.assertEqual(
+            {'person_detector': False, 'vehicle_detector': False},
+            node.detector_states)
+
+    def test_get_detector_states_callback_filters_by_request_data(self):
+        node = object.__new__(AxisDetectionNode)
+        node.detector_states = {
+            'person_detector': True,
+            'vehicle_detector': False,
+        }
+        node.detector_states_lock = threading.Lock()
+
+        response = node.getDetectorsNameListCb(SimpleNamespace(data=''))
+        self.assertTrue(response.ret.success)
+        self.assertEqual(['person_detector=True', 'vehicle_detector=False'], response.strings)
+
+        response = node.getDetectorsNameListCb(SimpleNamespace(data='vehicle_detector'))
+        self.assertTrue(response.ret.success)
+        self.assertEqual(['vehicle_detector=False'], response.strings)
+
+        response = node.getDetectorsNameListCb(SimpleNamespace(data='unknown_detector'))
+        self.assertFalse(response.ret.success)
+        self.assertEqual([], response.strings)
+
+    def test_publish_detector_states_and_filter_channel_detections(self):
+        class PublisherStub(object):
+            def __init__(self):
+                self.messages = []
+
+            def publish(self, message):
+                self.messages.append(message)
+
+        node = object.__new__(AxisDetectionNode)
+        node.detector_states = {
+            'person_detector': False,
+            'vehicle_detector': True,
+        }
+        node.detector_states_lock = threading.Lock()
+        node.detectors_states_pub = PublisherStub()
+        node.detection_publishers = {'1': PublisherStub()}
+        node.frame_id = 'axis_camera'
+
+        node.publishDetectorStates()
+        state_message = node.detectors_states_pub.messages[0]
+        self.assertEqual(['person_detector', 'vehicle_detector'], [
+            detector.name for detector in state_message.detectors])
+        self.assertEqual([False, True], [
+            detector.active for detector in state_message.detectors])
+
+        with patch('rospy.Time.now', return_value=rospy.Time(0)):
+            node.publishChannelDetections('1', [
+                {'channel': '1', 'track_id': '1', 'class_label': 'human', 'score': 0.9,
+                 'left': 0.1, 'top': 0.1, 'right': 0.2, 'bottom': 0.2},
+                {'channel': '1', 'track_id': '2', 'class_label': 'vehicle', 'score': 0.8,
+                 'left': 0.2, 'top': 0.2, 'right': 0.3, 'bottom': 0.3},
+            ])
+        detection_message = node.detection_publishers['1'].messages[0]
+        self.assertEqual(['vehicle'], [
+            detection.class_label for detection in detection_message.detections])
 
 
 if __name__ == '__main__':

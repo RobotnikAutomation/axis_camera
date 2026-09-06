@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
     rospy
     tf
     robotnik_msgs
+    object_detection_msgs
     diagnostic_msgs
     diagnostic_updater
     std_srvs
@@ -41,6 +42,7 @@ generate_messages(DEPENDENCIES sensor_msgs geometry_msgs std_msgs robotnik_msgs 
 catkin_package(
   CATKIN_DEPENDS 
     robotnik_msgs
+    object_detection_msgs
     message_runtime 
 )
 

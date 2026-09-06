@@ -294,16 +294,24 @@ Install the Python package `websocket-client` before running this node. It provi
 | `detection_channel_filter` | string[] | `['1']` | Camera channels requested from the AXIS metadata stream |
 | `frame_id` | string | `axis_camera` | Frame id used in published detection messages |
 | `rate` | float | `1.0` | Main node loop rate in Hz |
+| `person_detector_enabled` | bool | `true` | Initially publish human detections |
+| `vehicle_detector_enabled` | bool | `true` | Initially publish vehicle detections |
 
 ### Published topics
 
 * `~detectors/<channel>/status` (`robotnik_msgs/AxisMetadataDetectionArray`) — detections for supported classes (`human` and `vehicle`) grouped by camera channel. For example, channel `1` is published on `~detectors/1/status`.
+* `~detectors_states` (`object_detection_msgs/DetectorsState`) — current publication state of `person_detector` and `vehicle_detector`.
 
 Each item in `detections[]` is `robotnik_msgs/AxisMetadataDetection` with:
 * `track_id`
 * `class_label` (`human` or `vehicle`)
 * `score`
 * bounding box normalized coordinates: `left`, `top`, `right`, `bottom`
+
+### Detector services
+
+* `~activate_detector` (`object_detection_msgs/ManageDetector`) — enables or disables publication for `person_detector` and `vehicle_detector`. The request accepts `person_detector`, `vehicle_detector` or `all` in `name`, and the desired state in `active`. This only filters ROS output; it does not reconfigure detection on the AXIS camera.
+* `~get_detectors_name_list` (`robotnik_msgs/GetStringList`) — returns detector states. With an empty `data` field it returns both states; with `data` set to `person_detector` or `vehicle_detector` it returns only that state. Each returned string has the format `detector_name=state`, for example `person_detector=True`.
 
 ### Runtime behaviour
 

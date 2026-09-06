@@ -6,12 +6,22 @@ import rospy
 
 from std_msgs.msg import Header
 from robotnik_msgs.msg import AxisMetadataDetection, AxisMetadataDetectionArray
+from robotnik_msgs.msg import ReturnMessage
+from robotnik_msgs.srv import GetStringList, GetStringListResponse
+from object_detection_msgs.msg import DetectorState, DetectorsState
+from object_detection_msgs.srv import ManageDetector, ManageDetectorResponse
 
 from axis_camera.axis_lib.axis_detection import AxisDetectionClient
 
 
 class AxisDetectionNode(object):
     """ROS node that publishes AXIS analytics metadata detections."""
+
+    DETECTOR_NAMES = ('person_detector', 'vehicle_detector')
+    CLASS_TO_DETECTOR = {
+        'human': 'person_detector',
+        'vehicle': 'vehicle_detector',
+    }
 
     def __init__(self, args):
         self.hostname = args['hostname']
@@ -27,6 +37,11 @@ class AxisDetectionNode(object):
         self.detection_publishers = {}
         self.pending_detections = {}
         self.pending_detections_lock = threading.Lock()
+        self.detector_states = {
+            'person_detector': bool(args['person_detector_enabled']),
+            'vehicle_detector': bool(args['vehicle_detector_enabled']),
+        }
+        self.detector_states_lock = threading.Lock()
 
         self.detection_client = AxisDetectionClient(
             hostname=self.hostname,
@@ -43,6 +58,12 @@ class AxisDetectionNode(object):
     def rosSetup(self):
         for channel in AxisDetectionClient.normalize_channel_filter(self.channel_filter):
             self._getDetectionPublisher(channel)
+        self.detectors_states_pub = rospy.Publisher(
+            '~detectors_states', DetectorsState, queue_size=10)
+        self.activate_detector_service = rospy.Service(
+            '~activate_detector', ManageDetector, self.activateDetectorCb)
+        self.get_detectors_name_list_service = rospy.Service(
+            '~get_detectors_name_list', GetStringList, self.getDetectorsNameListCb)
         rospy.on_shutdown(self.stop)
 
     def startDetection(self):
@@ -65,6 +86,62 @@ class AxisDetectionNode(object):
     def onUnsupported(self, url):
         rospy.loginfo('%s: camera does not support analytics metadata endpoint %s -- detection disabled', rospy.get_name(), url)
 
+    def activateDetectorCb(self, request):
+        detector_names = self._requestedDetectorNames(request.name)
+        if detector_names is None:
+            return ManageDetectorResponse(
+                success=False,
+                message='Unknown detector "%s". Available detectors: %s' % (
+                    request.name, ', '.join(self.DETECTOR_NAMES)))
+
+        with self.detector_states_lock:
+            for detector_name in detector_names:
+                rospy.loginfo('%s: setting detector "%s" to %s', rospy.get_name(), detector_name, request.active)
+                self.detector_states[detector_name] = bool(request.active)
+
+        return ManageDetectorResponse(
+            success=True,
+            message='Detector state updated: %s=%s' % (
+                ', '.join(detector_names), request.active))
+
+    def getDetectorsNameListCb(self, request):
+        requested_name = str(request.data or '').strip()
+        if requested_name:
+            if requested_name not in self.DETECTOR_NAMES:
+                return GetStringListResponse(
+                    strings=[],
+                    ret=ReturnMessage(
+                        success=False,
+                        message='Unknown detector "%s". Available detectors: %s' % (
+                            requested_name, ', '.join(self.DETECTOR_NAMES))))
+            detector_names = [requested_name]
+        else:
+            detector_names = list(self.DETECTOR_NAMES)
+
+        return GetStringListResponse(
+            strings=detector_names,
+            ret=ReturnMessage(success=True, message='Detector states retrieved'))
+
+    def publishDetectorStates(self):
+        with self.detector_states_lock:
+            detector_states = dict(self.detector_states)
+
+        msg = DetectorsState()
+        for detector_name in self.DETECTOR_NAMES:
+            state = DetectorState()
+            state.name = detector_name
+            state.active = detector_states[detector_name]
+            msg.detectors.append(state)
+        self.detectors_states_pub.publish(msg)
+
+    def _requestedDetectorNames(self, requested_name):
+        requested_name = str(requested_name or '').strip()
+        if requested_name == 'all':
+            return list(self.DETECTOR_NAMES)
+        if requested_name in self.DETECTOR_NAMES:
+            return [requested_name]
+        return None
+
     def collectDetections(self, detections):
         with self.pending_detections_lock:
             for detection in detections:
@@ -81,12 +158,20 @@ class AxisDetectionNode(object):
 
         for channel in list(self.detection_publishers):
             self.publishChannelDetections(channel, pending_detections.get(channel, []))
+        self.publishDetectorStates()
 
     def publishChannelDetections(self, channel, detections):
+        with self.detector_states_lock:
+            detector_states = dict(self.detector_states)
+
         msg = AxisMetadataDetectionArray()
         msg.header = Header(stamp=rospy.Time.now(), frame_id=self.frame_id)
 
         for detection in detections:
+            detector_name = self.CLASS_TO_DETECTOR.get(detection['class_label'])
+            if detector_name is None or not detector_states[detector_name]:
+                continue
+
             det = AxisMetadataDetection()
             det.header = msg.header
             det.track_id = detection['track_id']
@@ -137,6 +222,8 @@ def main():
         'password': '',
         'frame_id': 'axis_camera',
         'rate': 1.0,
+        'person_detector_enabled': True,
+        'vehicle_detector_enabled': True,
     }
     args = {}
 
