@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
     rospy
     tf
     robotnik_msgs
+    object_detection_msgs
     diagnostic_msgs
     diagnostic_updater
     std_srvs
@@ -41,6 +42,7 @@ generate_messages(DEPENDENCIES sensor_msgs geometry_msgs std_msgs robotnik_msgs 
 catkin_package(
   CATKIN_DEPENDS 
     robotnik_msgs
+    object_detection_msgs
     message_runtime 
 )
 
@@ -50,6 +52,9 @@ catkin_install_python(PROGRAMS src/axis_camera/__init__.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 catkin_install_python(PROGRAMS src/axis_camera/axis_ptz_node.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+catkin_install_python(PROGRAMS src/axis_camera/axis_detection_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
   
 catkin_install_python(PROGRAMS src/axis_camera/axis_stream_node.py
@@ -68,5 +73,9 @@ install(
   DIRECTORY launch config data
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
+
+if(CATKIN_ENABLE_TESTING)
+  catkin_add_nosetests(test)
+endif()
 
 
