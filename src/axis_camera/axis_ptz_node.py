@@ -57,6 +57,8 @@ from robotnik_msgs.srv import SetInt16, SetInt16Response
 from robotnik_msgs.srv import SetString, SetStringResponse
 from robotnik_msgs.srv import GetStringList, GetStringListResponse
 from robotnik_msgs.srv import GetImageSettings, GetImageSettingsResponse
+from robotnik_msgs.srv import SetAutoTracking, SetAutoTrackingResponse
+from std_msgs.msg import Bool
 
 class AxisPTZ(threading.Thread):
     """
@@ -132,6 +134,9 @@ class AxisPTZ(threading.Thread):
         self.iris_min_value = 1.0
         self.iris_max_value = 9999.0
         self.iris_two_step_control = args.get('iris_two_step_control', False)
+
+        # Auto-tracking state
+        self.autotracking_active = False
 
         # Detect effective focus range at runtime
         self.effective_focus_min_raw = None
@@ -282,6 +287,9 @@ class AxisPTZ(threading.Thread):
         self.set_white_balance_service = rospy.Service('~set_white_balance', SetString, self.setWhiteBalanceServiceCb)
         self.get_white_balance_mode_service = rospy.Service('~get_white_balance_mode', GetStringList, self.getWhiteBalanceModeServiceCb)
         self.get_image_settings_service = rospy.Service('~get_image_settings', GetImageSettings, self.getImageSettingsServiceCb)
+        self.autotracking_pub = rospy.Publisher('~autotracking_active', Bool, queue_size=10, latch=True)
+        self.autotracking_pub.publish(Bool(data=self.autotracking_active))
+        self.set_autotracking_service = rospy.Service('~set_autotracking', SetAutoTracking, self.setAutoTrackingServiceCb)
         self.loadDeviceInfo()
         self.device_info_service = rospy.Service('~get_device_info', GetAxisDeviceInfo, self.getDeviceInfoServiceCb)
 
@@ -291,6 +299,8 @@ class AxisPTZ(threading.Thread):
         self.diagnostics_updater.add("Ptz state updater", self.getStateDiagnostic)
         # Creates a periodic callback to publish the diagnostics at desired freq
         self.diagnostics_timer = rospy.Timer(rospy.Duration(1.0), self.publishDiagnostics)
+        # Poll autotracking state to detect changes made outside ROS (web UI, VMS, etc.)
+        self.autotracking_poll_timer = rospy.Timer(rospy.Duration(2.0), self.pollAutoTrackingState)
 
         self.zoom_augments = []
         for i in range(int(self.min_zoom_augment), int(self.max_zoom_augment) + 1, int(self.min_zoom_step)):
@@ -324,11 +334,44 @@ class AxisPTZ(threading.Thread):
             firmware=self.device_firmware
         )
 
+    def setAutoTrackingServiceCb(self, req):
+        response = SetAutoTrackingResponse()
+        result = self.controller.setAutoTracking(req.enable)
+        response.success = result['success']
+        response.message = result['message']
+        if result['success']:
+            self.autotracking_active = req.enable
+            self.autotracking_pub.publish(Bool(data=self.autotracking_active))
+            rospy.loginfo('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
+        else:
+            rospy.logerr('%s:setAutoTrackingServiceCb: %s', rospy.get_name(), result['message'])
+        return response
+
+    def pollAutoTrackingState(self, event):
+        """
+        Synchronizes autotracking state with camera in case it is changed externally.
+        """
+        result = self.controller.getAutoTrackingState()
+        if not result['success']:
+            rospy.logdebug_throttle(30, '%s:pollAutoTrackingState: %s', rospy.get_name(), result['message'])
+            return
+
+        camera_state = bool(result['enabled'])
+        if camera_state != self.autotracking_active:
+            self.autotracking_active = camera_state
+            self.autotracking_pub.publish(Bool(data=self.autotracking_active))
+            rospy.loginfo('%s:pollAutoTrackingState: autotracking updated from camera: %s',
+                          rospy.get_name(), self.autotracking_active)
+
     def commandPTZCb(self, msg):
         """
             Command for ptz movements
         """
         self.t_last_command_time = rospy.Time.now()
+
+        if self.autotracking_active:
+            rospy.logwarn_throttle(5, '%s:commandPTZCb: ignoring PTZ command, auto-tracking is active', rospy.get_name())
+            return
 
         if self.ptz_syncronized:
             self.setCommandPTZ(msg)
@@ -657,6 +700,9 @@ class AxisPTZ(threading.Thread):
             Performs the control of the camera ptz
         """
         t_now = rospy.Time.now()
+
+        if self.autotracking_active:
+            return
 
         if self.control_mode == 'position':
             # Only if it's syncronized

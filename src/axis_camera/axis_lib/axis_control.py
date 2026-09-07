@@ -18,6 +18,7 @@ except:
 import socket
 import math
 import xml.etree.ElementTree as ET
+import json
 
 class ControlAxis():
     def __init__(self, hostname, username='root', password=''):
@@ -618,6 +619,270 @@ class ControlAxis():
         finally:
             conn.close()
         return ret
+
+    def _try_autotracking_admin(self, opener, enable):
+        """
+        Tries to set autotracking via VAPIX PTZ Autotracking admin API.
+        Returns (success, message) tuple. success=None means 404 => try fallback.
+        """
+        url = 'http://%s/axis-cgi/ptz-autotracking/admin.cgi' % self.hostname
+        payload = {
+            'apiVersion': '1.0',
+            'method': 'setAutotrackingState',
+            'params': {'enabled': bool(enable)}
+        }
+        try:
+            request = urllib_request.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'}
+            )
+            response = opener.open(request, timeout=5)
+            body = response.read().decode('utf-8', errors='replace').strip()
+            if response.getcode() in (200, 204):
+                if body:
+                    try:
+                        body_json = json.loads(body)
+                    except Exception:
+                        body_json = None
+                    if isinstance(body_json, dict) and isinstance(body_json.get('error'), dict):
+                        return False, 'VAPIX admin.cgi error: %s' % str(body_json['error'].get('code'))
+                return True, 'Auto-tracking %s via VAPIX admin.cgi' % ('enabled' if enable else 'disabled')
+            return False, 'VAPIX admin.cgi HTTP %d' % response.getcode()
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'VAPIX admin.cgi not found (404)'
+            return False, 'VAPIX admin.cgi HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return False, 'VAPIX admin.cgi connection error: %s' % str(e)
+
+    def _try_autotracking_vapix(self, opener, enable):
+        """
+        Tries to set autotracking via official VAPIX PTZ Autotracking API.
+        Available on cameras with firmware >= 10.x that expose the CGI natively.
+        Returns (success, message) tuple. success=None means 404 => try fallback.
+        """
+        url = 'http://%s/axis-cgi/ptz-autotracking/operator.cgi' % self.hostname
+        payload = {
+            'apiVersion': '1.0',
+            'method': 'setAutotrackingState',
+            'params': {'enabled': bool(enable)}
+        }
+        try:
+            request = urllib_request.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            response = opener.open(request, timeout=5)
+            body = response.read().decode('utf-8', errors='replace').strip()
+            if response.getcode() in (200, 204):
+                if body:
+                    try:
+                        body_json = json.loads(body)
+                    except Exception:
+                        body_json = None
+                    if isinstance(body_json, dict) and isinstance(body_json.get('error'), dict):
+                        return False, 'VAPIX operator.cgi error: %s' % str(body_json['error'].get('code'))
+                return True, 'Auto-tracking %s via VAPIX operator.cgi' % ('enabled' if enable else 'disabled')
+            return False, 'VAPIX operator.cgi HTTP %d' % response.getcode()
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return None, 'VAPIX operator.cgi not found (404)'  # None = try fallback
+            return False, 'VAPIX operator.cgi HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return False, 'VAPIX operator.cgi connection error: %s' % str(e)
+
+    def _try_autotracking_acap(self, opener, enable):
+        """
+        Tries to set autotracking via the PTZ Autotracker ACAP app local endpoint.
+        This is the API the app exposes regardless of firmware version, and is the
+        same endpoint used by the camera web UI. Works on cameras like P5676-LE.
+        Returns (success, message) tuple.
+        """
+        url = 'http://%s/local/axis-ptz-autotracking/settings.fcgi' % self.hostname
+        payload = {
+            'apiVersion': '1.0',
+            'method': 'setAutotrackingState',
+            'params': {'enabled': bool(enable)}
+        }
+        try:
+            request = urllib_request.Request(
+                url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            response = opener.open(request, timeout=5)
+            body = response.read().decode('utf-8', errors='replace').strip()
+            if response.getcode() in (200, 204):
+                if body:
+                    try:
+                        body_json = json.loads(body)
+                    except Exception:
+                        body_json = None
+                    if isinstance(body_json, dict) and isinstance(body_json.get('error'), dict):
+                        return False, 'ACAP settings.fcgi error: %s' % str(body_json['error'].get('code'))
+                return True, 'Auto-tracking %s via ACAP settings.fcgi' % ('enabled' if enable else 'disabled')
+            return False, 'ACAP settings.fcgi HTTP %d' % response.getcode()
+        except urllib_error.HTTPError as e:
+            if e.code == 404:
+                return False, 'ACAP settings.fcgi not found (404) - PTZ Autotracker app may not be installed'
+            return False, 'ACAP settings.fcgi HTTP error %d: %s' % (e.code, e.reason)
+        except (urllib_error.URLError, socket.timeout) as e:
+            return False, 'ACAP settings.fcgi connection error: %s' % str(e)
+
+    def setAutoTracking(self, enable):
+        """
+        Enables or disables auto-tracking on Axis PTZ cameras.
+
+          Uses a three-tier approach to support a wide range of camera models:
+             1. VAPIX PTZ Autotracking admin API (/axis-cgi/ptz-autotracking/admin.cgi)
+                 - Newer firmware endpoint.
+             2. VAPIX PTZ Autotracking operator API (/axis-cgi/ptz-autotracking/operator.cgi)
+                 - Older firmware endpoint.
+             3. PTZ Autotracker ACAP app local API (/local/axis-ptz-autotracking/settings.fcgi)
+             - The app's own REST endpoint, used by the web UI, available on any
+               camera with the PTZ Autotracker ACAP app installed (e.g. P5676-LE)
+
+        Returns a dict with keys: success (bool), message (str).
+        """
+        ret = {'success': False, 'message': ''}
+        opener = self._get_digest_opener()
+
+        # 1. Try VAPIX admin endpoint first
+        success, message = self._try_autotracking_admin(opener, enable)
+        if success is True:
+            ret['success'] = True
+            ret['message'] = message
+            return ret
+        if success is False:
+            ret['message'] = message
+            return ret
+
+        # 2. Try legacy VAPIX operator endpoint
+        success, message = self._try_autotracking_vapix(opener, enable)
+        if success is True:
+            ret['success'] = True
+            ret['message'] = message
+            return ret
+        if success is False:
+            ret['message'] = message
+            return ret
+
+        # success is None => 404, fall through to ACAP app endpoint
+        # 3. Fall back to ACAP app local endpoint
+        success, message = self._try_autotracking_acap(opener, enable)
+        ret['success'] = success
+        ret['message'] = message
+        return ret
+
+    def _extract_autotracking_enabled(self, payload):
+        """
+        Extracts autotracking enabled state from different JSON response shapes.
+        Returns True/False when found, otherwise None.
+        """
+        if isinstance(payload, bool):
+            return payload
+
+        if not isinstance(payload, dict):
+            return None
+
+        # Fast path for common direct keys
+        for key in ('enabled', 'active', 'autotracking', 'autotrack'):
+            value = payload.get(key)
+            if isinstance(value, bool):
+                return value
+
+        # Recursive walk for nested structures (data/result/params/etc.)
+        stack = [payload]
+        while stack:
+            current = stack.pop()
+            if not isinstance(current, dict):
+                continue
+
+            for key, value in current.items():
+                if key in ('enabled', 'active', 'autotracking', 'autotrack'):
+                    if isinstance(value, bool):
+                        return value
+                    if isinstance(value, str):
+                        lowered = value.strip().lower()
+                        if lowered in ('1', 'true', 'on', 'enabled', 'yes'):
+                            return True
+                        if lowered in ('0', 'false', 'off', 'disabled', 'no'):
+                            return False
+                if isinstance(value, dict):
+                    stack.append(value)
+
+        return None
+
+    def _read_autotracking_state_endpoint(self, opener, url):
+        """
+        Reads autotracking state from one endpoint trying common getter methods.
+        Returns (success, enabled, message).
+        """
+        methods = ('getAutotrackingState', 'getAutotrackerState', 'getState')
+        for method in methods:
+            payload = {
+                'apiVersion': '1.0',
+                'method': method,
+                'params': {}
+            }
+            try:
+                request = urllib_request.Request(
+                    url,
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'}
+                )
+                response = opener.open(request, timeout=5)
+                body = response.read().decode('utf-8', errors='replace').strip()
+                if response.getcode() not in (200, 204):
+                    continue
+                if not body:
+                    continue
+
+                try:
+                    body_json = json.loads(body)
+                except Exception:
+                    continue
+
+                if isinstance(body_json, dict) and isinstance(body_json.get('error'), dict):
+                    continue
+
+                enabled = self._extract_autotracking_enabled(body_json)
+                if enabled is not None:
+                    return True, enabled, 'read via %s' % url
+            except urllib_error.HTTPError as e:
+                if e.code == 404:
+                    return False, None, '%s not found (404)' % url
+            except (urllib_error.URLError, socket.timeout) as e:
+                return False, None, 'connection error on %s: %s' % (url, str(e))
+
+        return False, None, 'no readable state on %s' % url
+
+    def getAutoTrackingState(self):
+        """
+        Reads current autotracking state from camera APIs.
+        Returns a dict: success (bool), enabled (bool or None), message (str).
+        """
+        opener = self._get_digest_opener()
+        urls = (
+            'http://%s/axis-cgi/ptz-autotracking/admin.cgi' % self.hostname,
+            'http://%s/axis-cgi/ptz-autotracking/operator.cgi' % self.hostname,
+            'http://%s/local/axis-ptz-autotracking/settings.fcgi' % self.hostname,
+        )
+
+        errors = []
+        for url in urls:
+            success, enabled, message = self._read_autotracking_state_endpoint(opener, url)
+            if success:
+                return {'success': True, 'enabled': enabled, 'message': message}
+            errors.append(message)
+
+        return {
+            'success': False,
+            'enabled': None,
+            'message': '; '.join(errors)
+        }
 
     def getPTZState(self):
         """

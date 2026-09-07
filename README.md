@@ -127,6 +127,7 @@ roslaunch axis_camera axis_ptz.launch ip_address:=<camera_ip>
 * `~camera_params` (`robotnik_msgs/Axis`) — Current PTZ state. `focus` and `iris` fields are published as percentage (0–100).
 * `~camera_parameters` (`robotnik_msgs/CameraParameters`) — Zoom range and step configuration.
 * `~joint_states` (`sensor_msgs/JointState`) — Pan, tilt and zoom as joint positions.
+* `~autotracking_active` (`std_msgs/Bool`) — Current auto-tracking state. Latched topic; `true` when auto-tracking is active, `false` otherwise.
 * `~image_settings` (`robotnik_msgs/ImageSettings`) — Current image settings published at `image_settings_pub_rate`. The `is_valid` field indicates whether all fields were successfully read from the camera. On cameras with limited VAPIX read support, last-known values may be used as a fallback (see [Image settings behaviour](#image-settings-behaviour)).
 
 ### Subscribed Topics
@@ -181,6 +182,28 @@ auto: true"
 # Set manual iris to 75%
 rosservice call /axis_camera_ptz/set_iris "value: 75.0
 auto: false"
+```
+
+#### `~set_autotracking` (`robotnik_msgs/SetAutoTracking`)
+Enables or disables auto-tracking on supported camera models.
+
+**Important**: When auto-tracking is active, manual PTZ commands are suppressed by the camera. The node honors this by not sending PTZ commands while `~autotracking_active` is true.
+
+
+Request fields:
+* `enable` (`bool`): if `true`, enable auto-tracking; if `false`, disable it.
+
+Response fields:
+* `success` (`bool`): `true` if the command succeeded; `false` if the camera does not support auto-tracking or a communication error occurred.
+* `message` (`string`): status or error message.
+
+Examples:
+```bash
+# Enable auto-tracking
+rosservice call /axis_camera_ptz/set_autotracking "enable: true"
+
+# Disable auto-tracking
+rosservice call /axis_camera_ptz/set_autotracking "enable: false"
 ```
 
 > **Note on service names**: service names depend on the node namespace. Run `rosservice list` to get the exact names in your setup.
@@ -251,6 +274,15 @@ relative: false"
 * `pan` and `tilt` as float (radians)
 * `zoom` as float (proportional value between `min_zoom_augment` and `max_zoom_augment`)
 * `relative` as bool — if `true`, values are added to the current position
+
+### Auto-tracking behaviour
+
+* Auto-tracking is controlled via two endpoints tried in order:
+  1. **VAPIX PTZ Autotracking API** (`/axis-cgi/ptz-autotracking/operator.cgi`) — official endpoint available on cameras with firmware ≥ 10.x.
+  2. **PTZ Autotracker ACAP app** (`/local/axis-ptz-autotracking/settings.fcgi`) — the app's own REST API, used by the camera web UI. Available on any camera with the PTZ Autotracker ACAP app installed.
+* If neither endpoint responds, `success=false` is returned with a descriptive message (e.g. app not installed).
+* While auto-tracking is active, the node suppresses all outgoing PTZ commands (both topic-based commands and the continuous control loop).
+* The node polls the camera every 2 seconds to detect state changes made outside ROS (e.g. via the camera web UI or VMS). The `~autotracking_active` topic is updated automatically if a change is detected.
 
 ### Focus and iris behaviour
 
